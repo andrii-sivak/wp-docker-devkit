@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "code-review": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/code-review/SKILL.md",
+      "computedHash": "57cfd4ceb011f05e58a1a4f4cad3b2e03419d371f8990f4bcb32ff0d435a039f"
+    },
+    "docker-build-strategies": {
+      "source": "docker/skills",
+      "sourceType": "github",
+      "skillPath": "skills/docker-build-strategies/SKILL.md",
+      "computedHash": "e6a297d613873cf74b030655ee8405ca4434980cfb0dfd412ac5aa4e213d3d5c"
+    },
+    "docker-compose-patterns": {
+      "source": "docker/skills",
+      "sourceType": "github",
+      "skillPath": "skills/docker-compose-patterns/SKILL.md",
+      "computedHash": "391f366bb0e60f5c7c48ecc814b917e7dae797edbb58625d228cb951d7a538ee"
+    },
+    "docker-destructive-guardrails": {
+      "source": "docker/skills",
+      "sourceType": "github",
+      "skillPath": "skills/docker-destructive-guardrails/SKILL.md",
+      "computedHash": "f6c72f2ba003b2d6dc480f97beb0e166a61b5acfb1f0f6f31af2fa21a66bd9f2"
+    },
+    "docker-project-foundations": {
+      "source": "docker/skills",
+      "sourceType": "github",
+      "skillPath": "skills/docker-project-foundations/SKILL.md",
+      "computedHash": "6b2334b2c24910d177e1f80a0cc1f5135f2a9b33b722673873435736de36128f"
+    },
+    "implement": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/implement/SKILL.md",
+      "computedHash": "b6371a0a6723bad551f3adc721e3729a6a97acfc3670dc2bdea198bbe78408c0"
+    },
+    "interrogate": {
+      "source": "cursor/plugins",
+      "sourceType": "github",
+      "skillPath": "harness/pstack/claude-code/skills/interrogate/SKILL.md",
+      "computedHash": "f150d824e76bf585b6788203cb59126f11617e352b8296dd3df376982eb93f04"
+    },
+    "setup-matt-pocock-skills": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/setup-matt-pocock-skills/SKILL.md",
+      "computedHash": "1d35d0afa3ded88c9324d38db08b2cff91cd03e0e11d64786bee41385cd7b9fb"
+    },
+    "tdd": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/tdd/SKILL.md",
+      "computedHash": "daf55026f456af104a72fa43247f7bcec89e5127316dc5b1b8d675d6a9d8ce94"
+    },
+    "to-tickets": {
+      "source": "mattpocock/skills",
+      "sourceType": "github",
+      "skillPath": "skills/engineering/to-tickets/SKILL.md",
+      "computedHash": "5f871bdc46a9212222214ba399be4965374208af1bd7f48f1271bef72841dd31"
+    }
+  }
+}
