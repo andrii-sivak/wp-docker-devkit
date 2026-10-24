@@ -94,6 +94,20 @@ bin/wp-devkit-copy.sh \
   --new-url "http://127.0.0.1:8082"
 ```
 
+Before either copy, the script prints approximate file sizes for the source and for `wp-content/uploads/`, the file space for two copies with uploads included and excluded, and the free space on the destination filesystem. It refuses that copy before writing if the destination clearly cannot hold the selected copy. Run the same `--uploads` value for baseline and candidate. The default is `include`, which copies media. `--uploads exclude` leaves an empty writable `wp-content/uploads/` in each copy and does not change the original uploads directory.
+
+```bash
+bin/wp-devkit-copy.sh \
+  --role baseline \
+  --uploads exclude \
+  --project projectxbase \
+  --port 8081 \
+  --old-url "http://127.0.0.1:8080" \
+  --new-url "http://127.0.0.1:8081"
+```
+
+The numbers are an estimate, not a guaranteed upper bound. SQL snapshots, database volumes, Docker images, filesystem quotas, and caches can need more space and may sit on another disk. When uploads are excluded, restored databases still contain attachment records, but the files are absent. Missing media in that mode is a testing limitation, not by itself a PHP, WordPress, or plugin regression.
+
 If a sibling already exists or the parent directory is not writable, the command stops. Pass `--dest /another/path` only when that path is outside the source and is empty. The copy skips nested trees that already contain `.wp-devkit-instance`, and it skips top-level `*-baseline`, `*-candidate`, and `*-snapshots` directories. It refuses a symlink that points outside the source. Each copied file keeps the uid, gid, and mode it had in the source, including mixed ownership. The original tree is not chowned. The copy root is not made world-writable. Marker files and `.env` are written inside the copy's `wp-devkit/` and are readable by the user who ran the copy. PHP-FPM and WP-CLI run as uid 33 (`www-data`). Core and plugin updates on a copy succeed when those files are writable by uid 33; otherwise adjust the copy, not the original. Each copy receives its own `.env`, project name, HTTP port, and PHP image tag.
 
 Check the copy, then start it and import the same snapshot into its own database. Run these from `project-x/wp-devkit/`. A sibling of `project-x/` is two levels up (`../../`), because `../` is `project-x/` itself. These commands name the baseline copy, not the source:

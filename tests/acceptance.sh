@@ -17,8 +17,26 @@ PORT_CAND=$((PORT_SRC + 2))
 PORT_CORE=$((PORT_SRC + 3))
 CREATED_WORK=0
 if [[ -n "${WP_DEVKIT_ACCEPTANCE:-}" ]]; then
-  WORK=$WP_DEVKIT_ACCEPTANCE
-  mkdir -p "$WORK"
+  if [[ -e "$WP_DEVKIT_ACCEPTANCE" && ! -d "$WP_DEVKIT_ACCEPTANCE" ]]; then
+    echo "acceptance: refusing WP_DEVKIT_ACCEPTANCE because it is not a directory: $WP_DEVKIT_ACCEPTANCE" >&2
+    exit 2
+  fi
+  if [[ -d "$WP_DEVKIT_ACCEPTANCE" ]]; then
+    if find "$WP_DEVKIT_ACCEPTANCE" -mindepth 1 -print -quit | grep -q .; then
+      echo "acceptance: refusing WP_DEVKIT_ACCEPTANCE because it is not empty: $WP_DEVKIT_ACCEPTANCE" >&2
+      exit 2
+    fi
+    WORK=$(cd "$WP_DEVKIT_ACCEPTANCE" && pwd)
+  else
+    parent=$(dirname "$WP_DEVKIT_ACCEPTANCE")
+    if [[ ! -d "$parent" ]]; then
+      echo "acceptance: refusing WP_DEVKIT_ACCEPTANCE because its parent does not exist: $parent" >&2
+      exit 2
+    fi
+    mkdir "$WP_DEVKIT_ACCEPTANCE"
+    WORK=$(cd "$WP_DEVKIT_ACCEPTANCE" && pwd)
+    CREATED_WORK=1
+  fi
 else
   WORK=$(mktemp -d "${TMPDIR:-/tmp}/wp-devkit-accept-${RUN}.XXXXXX")
   CREATED_WORK=1
@@ -258,6 +276,8 @@ docker compose --project-directory "$SRC/wp-devkit" exec -T -u root php sh -c 'm
 ( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --role candidate --project "$P_CAND" --port "$PORT_CAND" --old-url "http://127.0.0.1:${PORT_SRC}" --new-url "http://127.0.0.1:${PORT_CAND}" ) >"$LOG/copy-cand.txt" 2>&1
 assert "nested instance excluded" test ! -e "$BASE/nested-instance/secret.txt"
 assert "baseline marker written" test -f "$BASE/wp-devkit/.wp-devkit-instance"
+assert "default copy includes uploads" test -f "$BASE/wp-content/uploads/plain.txt"
+grep -q '^uploads=include$' "$BASE/wp-devkit/.wp-devkit-meta" && ok "baseline records uploads include" || bad "baseline records uploads include"
 base_mode=$(stat -c '%a' "$BASE")
 assert "copy root is not mode 1777" test "$base_mode" != "1777"
 docker compose --project-directory "$BASE/wp-devkit" build >"$LOG/build-base.txt" 2>&1

@@ -168,6 +168,81 @@ wp_devkit_assert_compose_ownership() {
   fi
 }
 
+# Bytes free on the filesystem that holds this path. WP_DEVKIT_FREE_BYTES,
+# when set, replaces df so a test can force a refusal without filling the disk.
+wp_devkit_free_bytes() {
+  local path=$1
+  if [[ -n "${WP_DEVKIT_FREE_BYTES:-}" ]]; then
+    printf '%s\n' "$WP_DEVKIT_FREE_BYTES"
+    return
+  fi
+  df -B1 --output=avail "$path" 2>/dev/null | awk 'NR==2 {print $1}'
+}
+
+wp_devkit_tree_bytes() {
+  local path=$1
+  if [[ ! -e "$path" ]]; then
+    printf '0\n'
+    return
+  fi
+  du -sb "$path" | awk '{print $1}'
+}
+
+# Print one-copy and two-copy file estimates. Refuse when this copy clearly
+# does not fit. Database volumes, snapshots, images, quotas, and caches are
+# not part of the number.
+wp_devkit_check_copy_space() {
+  local source=$1 dest_parent=$2 uploads=$3
+  local site_bytes up_bytes with_one without_one need free
+  site_bytes=$(wp_devkit_tree_bytes "$source")
+  if [[ -d "$source/wp-content/uploads" ]]; then
+    up_bytes=$(wp_devkit_tree_bytes "$source/wp-content/uploads")
+  else
+    up_bytes=0
+  fi
+  if (( up_bytes > site_bytes )); then
+    with_one=$((site_bytes + up_bytes))
+    without_one=$site_bytes
+  else
+    with_one=$site_bytes
+    without_one=$((site_bytes - up_bytes))
+  fi
+  if [[ "$uploads" == exclude ]]; then
+    need=$without_one
+  else
+    need=$with_one
+  fi
+  echo "wp-devkit: source files about ${site_bytes} bytes; uploads about ${up_bytes} bytes."
+  echo "wp-devkit: one copy with uploads about ${with_one} bytes; without uploads about ${without_one} bytes."
+  echo "wp-devkit: two copies with uploads about $((with_one * 2)) bytes; without uploads about $((without_one * 2)) bytes."
+  echo "wp-devkit: this ${uploads} copy needs about ${need} bytes of file space. SQL snapshots, database volumes, Docker images, quotas, and caches are extra. This is not a guaranteed upper bound."
+  free=$(wp_devkit_free_bytes "$dest_parent" || true)
+  if [[ -z "$free" || ! "$free" =~ ^[0-9]+$ ]]; then
+    echo "wp-devkit: could not read free space on $dest_parent. Capacity is unverified." >&2
+    return 0
+  fi
+  echo "wp-devkit: about ${free} bytes free on $dest_parent."
+  if (( free < need )); then
+    wp_devkit_die "not enough free space for this copy (need about ${need} bytes, free ${free}). Nothing was written."
+  fi
+}
+
+# Other sibling copies must record the same uploads mode.
+wp_devkit_assert_same_uploads() {
+  local source=$1 uploads=$2
+  local parent base name sib meta got
+  source=$(wp_devkit_realpath "$source")
+  parent=$(dirname "$source")
+  base=$(basename "$source")
+  for name in "${base}-baseline" "${base}-candidate"; do
+    sib="$parent/$name"
+    meta="$sib/wp-devkit/.wp-devkit-meta"
+    [[ -f "$meta" ]] || continue
+    got=$(wp_devkit_meta_get "$meta" uploads || true)
+    [[ -z "$got" || "$got" == "$uploads" ]] || wp_devkit_die "uploads mode is ${uploads} but $sib was copied with uploads=${got}. Both copies must use the same mode."
+  done
+}
+
 # Remove only the MariaDB dump directive that older clients treat as a command.
 # The line is exactly: /*M!999999\- enable the sandbox mode */
 # Statements that merely contain those words, including multi-row INSERTs, stay.

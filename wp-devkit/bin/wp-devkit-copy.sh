@@ -11,6 +11,7 @@ port=""
 old_url=""
 new_url=""
 role=""
+uploads="include"
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -21,9 +22,11 @@ while [[ $# -gt 0 ]]; do
     --port) port=$2; shift 2 ;;
     --old-url) old_url=$2; shift 2 ;;
     --new-url) new_url=$2; shift 2 ;;
+    --uploads) uploads=$2; shift 2 ;;
     *) wp_devkit_die "unknown argument: $1" ;;
   esac
 done
+[[ "$uploads" == include || "$uploads" == exclude ]] || wp_devkit_die "uploads must be include or exclude"
 
 [[ -n "$project" && -n "$port" && -n "$new_url" ]] || wp_devkit_die "required: --project --port --new-url, plus --dest or --role baseline|candidate"
 wp_devkit_assert_project "$project"
@@ -48,6 +51,8 @@ if wp_devkit_inside "$dest" "$source_dir"; then
   wp_devkit_die "destination must be outside the source WordPress root"
 fi
 wp_devkit_assert_compose_ownership "$dest/wp-devkit" "$project" exclusive
+wp_devkit_assert_same_uploads "$source_dir" "$uploads"
+wp_devkit_check_copy_space "$source_dir" "$dest_parent" "$uploads"
 
 while IFS= read -r link; do
   target=$(readlink -f "$link" || true)
@@ -71,6 +76,9 @@ while IFS= read -r name; do
       ;;
   esac
 done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -printf '%f\n')
+if [[ "$uploads" == exclude ]]; then
+  excludes+=(--exclude "./wp-content/uploads")
+fi
 
 src_project=$(wp_devkit_env_project "$source_kit/.env" || true)
 tar_project=()
@@ -106,9 +114,9 @@ elif [[ -f "$source_kit/.env.example" ]]; then
 else
   : > "$env_file"
 fi
-python3 - "$env_file" "$stage" "$project" "$port" "$new_url" "$old_url" "$source_dir" <<'PY'
+python3 - "$env_file" "$stage" "$project" "$port" "$new_url" "$old_url" "$source_dir" "$uploads" <<'PY'
 import sys
-env_path, stage, project, port, url, old_url, source = sys.argv[1:]
+env_path, stage, project, port, url, old_url, source, uploads = sys.argv[1:]
 keys = {
     "COMPOSE_PROJECT_NAME": project,
     "HTTP_PORT": port,
@@ -132,7 +140,7 @@ for name, value in keys.items():
 open(env_path, "w", encoding="utf-8").write("\n".join(out) + "\n")
 open(f"{stage}/.wp-devkit-instance", "w", encoding="utf-8").write(project + "\n")
 open(f"{stage}/.wp-devkit-meta", "w", encoding="utf-8").write(
-    f"project={project}\nhttp_port={port}\nold_url={old_url}\nnew_url={url}\nsource={source}\n"
+    f"project={project}\nhttp_port={port}\nold_url={old_url}\nnew_url={url}\nsource={source}\nuploads={uploads}\n"
 )
 PY
 
@@ -149,11 +157,25 @@ else
     php -c "cp /stage/.wp-devkit-instance /stage/.wp-devkit-meta /stage/.env /kit/ && chown ${uid}:${gid} /kit/.wp-devkit-instance /kit/.wp-devkit-meta /kit/.env && chmod 644 /kit/.wp-devkit-instance /kit/.wp-devkit-meta /kit/.env"
 fi
 
+if [[ "$uploads" == exclude ]]; then
+  if [[ -d "$source_dir/wp-content/uploads" ]]; then
+    up_mode=$(stat -c %a "$source_dir/wp-content/uploads")
+    up_owner=$(stat -c %u:%g "$source_dir/wp-content/uploads")
+  else
+    up_mode=755
+    up_owner=33:33
+  fi
+  docker compose --project-directory "$source_kit" "${tar_project[@]}" run --rm --no-deps -T --user 0 \
+    --entrypoint sh \
+    -v "$dest:/dest" \
+    php -c "mkdir -p /dest/wp-content/uploads && chown ${up_owner} /dest/wp-content/uploads && chmod ${up_mode} /dest/wp-content/uploads"
+fi
+
 if [[ "$cleanup_tar_project" -eq 1 ]]; then
   docker compose --project-directory "$source_kit" --project-name "$src_project" down --remove-orphans >/dev/null
 fi
 
-echo "wp-devkit: copied to $dest (project $project, port $port)."
+echo "wp-devkit: copied to $dest (project $project, port $port, uploads $uploads)."
 echo "wp-devkit: do not edit the source site or its database until both copies have been restored from the same snapshot."
 "$(dirname "$0")/wp-devkit-check-db.sh" "$dest"
 echo "wp-devkit: do not start this copy until the database check above succeeded."

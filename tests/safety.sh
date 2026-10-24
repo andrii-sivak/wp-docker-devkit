@@ -232,6 +232,70 @@ else
   assert "clashing destination was not created" test ! -e "$ROOT/own-src-candidate"
 fi
 
+say "uploads include, exclude, and disk refusal"
+UP="$ROOT/up-src"
+mkdir -p "$UP/wp-devkit" "$UP/wp-content/uploads/2024/nested" "$UP/wp-content/plugins"
+printf 'media-keep\n' > "$UP/wp-content/uploads/2024/nested/photo.txt"
+printf 'plugin-keep\n' > "$UP/wp-content/plugins/keep.php"
+printf 'COMPOSE_PROJECT_NAME=wpup%s\n' "$TAG" > "$UP/wp-devkit/.env"
+photo_hash=$(sha256sum "$UP/wp-content/uploads/2024/nested/photo.txt" | awk '{print $1}')
+export WP_DEVKIT_FREE_BYTES=1
+set +e
+"$REPO/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --dest "$ROOT/up-too-small" --project "wpd${TAG}" --port 18095 \
+  --new-url "http://127.0.0.1:18095" --uploads include >"$ROOT/disk.txt" 2>&1
+disk_code=$?
+set -e
+unset WP_DEVKIT_FREE_BYTES
+assert "low free space exits non-zero" test "$disk_code" -ne 0
+assert "low free space wrote nothing" test ! -e "$ROOT/up-too-small"
+grep -q 'Nothing was written' "$ROOT/disk.txt" && ok "low free space message" || bad "low free space message"
+if ! docker image inspect wp-devkit-php:8.4 >/dev/null 2>&1; then
+  skip "uploads copy image wp-devkit-php:8.4 is not present"
+else
+  tar -C "$REPO/wp-devkit" -cf - . | tar -C "$UP/wp-devkit" -xf -
+  chmod +x "$UP"/wp-devkit/bin/*.sh
+  printf 'COMPOSE_PROJECT_NAME=wpup%s\nPHP_IMAGE=wp-devkit-php:8.4\n' "$TAG" > "$UP/wp-devkit/.env"
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --dest "$ROOT/up-included" --project "wpi${TAG}" --port 18094 \
+    --new-url "http://127.0.0.1:18094" --uploads include >"$ROOT/up-include.txt" 2>&1
+  assert "include keeps nested upload" test "$(cat "$ROOT/up-included/wp-content/uploads/2024/nested/photo.txt")" = "media-keep"
+  assert "include keeps plugin" test -f "$ROOT/up-included/wp-content/plugins/keep.php"
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --role baseline --project "wpe${TAG}" --port 18093 \
+    --new-url "http://127.0.0.1:18093" --uploads exclude >"$ROOT/up-exclude-base.txt" 2>&1
+  set +e
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --role candidate --project "wpm${TAG}" --port 18092 \
+    --new-url "http://127.0.0.1:18092" --uploads include >"$ROOT/up-mismatch.txt" 2>&1
+  mismatch_code=$?
+  set -e
+  assert "different uploads mode is refused" test "$mismatch_code" -ne 0
+  assert "mismatched candidate was not created" test ! -e "$ROOT/up-src-candidate"
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --role candidate --project "wpc${TAG}" --port 18092 \
+    --new-url "http://127.0.0.1:18092" --uploads exclude >"$ROOT/up-exclude-cand.txt" 2>&1
+  assert "exclude omits nested upload" test ! -e "$ROOT/up-src-baseline/wp-content/uploads/2024/nested/photo.txt"
+  assert "exclude omits candidate upload" test ! -e "$ROOT/up-src-candidate/wp-content/uploads/2024"
+  assert "exclude leaves uploads directory" test -d "$ROOT/up-src-baseline/wp-content/uploads"
+  assert "exclude uploads directory is empty" test -z "$(find "$ROOT/up-src-baseline/wp-content/uploads" -mindepth 1 -print -quit)"
+  assert "exclude uploads directory is writable" test -w "$ROOT/up-src-baseline/wp-content/uploads"
+  grep -q '^uploads=exclude$' "$ROOT/up-src-baseline/wp-devkit/.wp-devkit-meta" && ok "baseline records uploads exclude" || bad "baseline records uploads exclude"
+  grep -q '^uploads=exclude$' "$ROOT/up-src-candidate/wp-devkit/.wp-devkit-meta" && ok "candidate records uploads exclude" || bad "candidate records uploads exclude"
+  assert "source upload unchanged" test "$(sha256sum "$UP/wp-content/uploads/2024/nested/photo.txt" | awk '{print $1}')" = "$photo_hash"
+fi
+
+say "acceptance override refuses existing data"
+OV="$ROOT/override-nonempty"
+mkdir -p "$OV"
+printf 'keep-user\n' > "$OV/user-data"
+printf 'not-a-directory\n' > "$ROOT/not-a-dir"
+set +e
+WP_DEVKIT_ACCEPTANCE="$OV" bash "$REPO/tests/acceptance.sh" >"$ROOT/override.txt" 2>&1
+ov_code=$?
+WP_DEVKIT_ACCEPTANCE="$ROOT/not-a-dir" bash "$REPO/tests/acceptance.sh" >"$ROOT/override-file.txt" 2>&1
+file_code=$?
+set -e
+assert "non-empty acceptance directory is refused" test "$ov_code" -eq 2
+assert "acceptance left pre-existing data" grep -qx 'keep-user' "$OV/user-data"
+assert "non-directory acceptance path is refused" test "$file_code" -eq 2
+assert "non-directory acceptance path unchanged" grep -qx 'not-a-directory' "$ROOT/not-a-dir"
+
 say "nginx denies sensitive files and still serves uploads"
 NGINX_IMAGE=nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
 if ! docker image inspect "$NGINX_IMAGE" >/dev/null 2>&1; then

@@ -3,6 +3,8 @@
 Example from the Linux pilot on 24 October 2026. It is a record of that run, not a promise that the next run will match these versions.
 
 - Goal: install a new site, then compare a plugin update and a WordPress core update on separate candidates.
+- Uploads: `include` for both baseline and candidate. Excluding uploads would leave attachment rows in the database without files; that is a testing limitation, not a PHP, WordPress, or plugin regression.
+- Disk: file copy of both trees was estimated before copying. Snapshots, database volumes, images, and caches are extra. The estimate is not a guaranteed upper bound.
 - Initial snapshot: `../project-x-snapshots/initial.sql`, outside the source, baseline, and candidate roots.
 - Baseline: project `wpdevkitbase`, `http://127.0.0.1:18082`, same snapshot in its own database volume.
 - Plugin candidate: project `wpdevkitcand`, `http://127.0.0.1:18083`.
