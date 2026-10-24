@@ -70,7 +70,7 @@ The runtime now lives in `wp-devkit/`. Compose bind-mounts the parent WordPress 
 
 `tests/acceptance.sh` with `WP_DEVKIT_ACCEPTANCE` unset (work directory `/tmp/wp-devkit-mvp`): 63 PASS, 0 FAIL. Greenfield root containing only `wp-devkit/` installed WordPress. Sibling baseline and candidate ran together. `hello-dolly` moved from 1.6 to 1.7.2 on the candidate only. Core download 6.8.3 then `wp core update` returned to 7.1.3 on the core copy; the baseline stayed 7.1.3. Cleanup removed only the candidate. The suite's own trap then ran `docker compose down --volumes` for the disposable projects it created.
 
-`tests/qualify-followup.sh` was updated for the new paths and was not re-run. PHP 7.4, the PHP switch, MySQL 8.4, and phpMyAdmin evidence above is from the previous layout.
+SPEC v1.2 uploads and disk preflight, 24 October 2026: `tests/safety.sh` 87 PASS, 0 FAIL, 0 SKIPPED. `tests/acceptance.sh` 69 PASS, 0 FAIL. Include mode kept a nested upload. Exclude mode left an empty writable `wp-content/uploads/` on both siblings and recorded `uploads=exclude`. A forced free-space value of 1 byte refused the copy before creating the destination. A non-empty `WP_DEVKIT_ACCEPTANCE` directory was refused and its file was left in place. `tests/qualify-followup.sh` was updated for the new paths and was not re-run. PHP 7.4, the PHP switch, MySQL 8.4, and phpMyAdmin evidence above is from the previous layout.
 
 Claude Code, Codex, Grok, Gemini CLI, and Antigravity were not executed against the skill. Explicit path invocation is what `START_HERE.md` documents. Native discovery was not tested.
 
