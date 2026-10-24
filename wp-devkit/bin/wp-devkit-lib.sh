@@ -125,7 +125,12 @@ import subprocess, sys
 project = sys.argv[1]
 
 def lines(args):
-    proc = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    proc = subprocess.run(args, text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        detail = proc.stderr.strip().splitlines()
+        message = detail[-1] if detail else f"exit {proc.returncode}"
+        print(f"wp-devkit: docker {' '.join(args[:2])} failed: {message}", file=sys.stderr)
+        raise SystemExit(1)
     return [line.strip() for line in proc.stdout.splitlines() if line.strip()]
 
 containers = lines(["docker", "ps", "-aq", "--filter", f"label=com.docker.compose.project={project}"])
@@ -146,7 +151,10 @@ PY
 wp_devkit_assert_compose_ownership() {
   local kit=$1 project=$2 mode=$3
   kit=$(wp_devkit_realpath "$kit")
-  local containers=0 unscoped=0 kind value resolved
+  local containers=0 unscoped=0 kind value resolved resources=""
+  if ! resources=$(wp_devkit_compose_resources "$project"); then
+    wp_devkit_die "could not inspect Docker resources for project $project. Refusing to continue."
+  fi
   while IFS=$'\t' read -r kind value; do
     [[ -n "$kind" ]] || continue
     if [[ "$mode" == exclusive ]]; then
@@ -162,7 +170,7 @@ wp_devkit_assert_compose_ownership() {
     else
       unscoped=1
     fi
-  done < <(wp_devkit_compose_resources "$project")
+  done <<< "$resources"
   if [[ "$mode" == owned && "$unscoped" -eq 1 && "$containers" -eq 0 ]]; then
     wp_devkit_die "compose project $project has a volume or network and no container that proves it belongs to $kit"
   fi
@@ -250,7 +258,7 @@ wp_devkit_strip_sandbox_directive() {
   sed -E '/^[[:space:]]*\/\*M!999999\\- enable the sandbox mode \*\/[[:space:]]*$/d'
 }
 
-# Print OK or the offending DB_HOST expression. Reads wp-config.php.
+# Print OK, MISSING, UNPARSEABLE, or MISMATCH. Never print the expression.
 wp_devkit_db_host_status() {
   local config=$1
   [[ -f "$config" ]] || {
@@ -270,6 +278,6 @@ if re.fullmatch(r"['\"]db['\"]", expr):
 elif "getenv_docker" in expr and "WORDPRESS_DB_HOST" in expr:
     print("OK")
 else:
-    print(expr)
+    print("MISMATCH")
 PY
 }

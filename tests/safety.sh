@@ -260,6 +260,34 @@ else
     --new-url "http://127.0.0.1:18094" --uploads include >"$ROOT/up-include.txt" 2>&1
   assert "include keeps nested upload" test "$(cat "$ROOT/up-included/wp-content/uploads/2024/nested/photo.txt")" = "media-keep"
   assert "include keeps plugin" test -f "$ROOT/up-included/wp-content/plugins/keep.php"
+  assert "copied env is mode 600" test "$(stat -c %a "$ROOT/up-included/wp-devkit/.env")" = "600"
+  assert "copied marker stays mode 644" test "$(stat -c %a "$ROOT/up-included/wp-devkit/.wp-devkit-instance")" = "644"
+  chmod a-w "$UP/wp-devkit"
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --dest "$ROOT/up-locked" --project "wpl${TAG}" --port 18089 \
+    --new-url "http://127.0.0.1:18089" --uploads include >"$ROOT/up-locked.txt" 2>&1
+  assert "docker-written env is mode 600" test "$(stat -c %a "$ROOT/up-locked/wp-devkit/.env")" = "600"
+  assert "docker-written marker stays mode 644" test "$(stat -c %a "$ROOT/up-locked/wp-devkit/.wp-devkit-instance")" = "644"
+  chmod u+w "$UP/wp-devkit"
+  chmod 644 "$UP/wp-devkit/.env"
+  env_bad=0
+  "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --dest "$ROOT/up-env" --project "wpe2${TAG}" --port 18088 \
+    --new-url "http://127.0.0.1:18088" --uploads include >"$ROOT/up-env.txt" 2>&1 &
+  env_pid=$!
+  while kill -0 "$env_pid" 2>/dev/null; do
+    if [[ -f "$ROOT/up-env/wp-devkit/.env" ]]; then
+      if [[ "$(stat -c %a "$ROOT/up-env/wp-devkit/.env")" != "600" ]]; then
+        env_bad=1
+      fi
+    fi
+  done
+  set +e
+  wait "$env_pid"
+  env_copy_code=$?
+  set -e
+  assert "env copy exits zero" test "$env_copy_code" -eq 0
+  assert "env was never observed outside mode 600" test "$env_bad" -eq 0
+  assert "finished env is mode 600" test "$(stat -c %a "$ROOT/up-env/wp-devkit/.env")" = "600"
+  assert "source env mode was not changed" test "$(stat -c %a "$UP/wp-devkit/.env")" = "644"
   "$UP/wp-devkit/bin/wp-devkit-copy.sh" --source "$UP" --role baseline --project "wpe${TAG}" --port 18093 \
     --new-url "http://127.0.0.1:18093" --uploads exclude >"$ROOT/up-exclude-base.txt" 2>&1
   set +e
@@ -562,6 +590,89 @@ assert "documented preflight runs from wp-devkit" grep -q 'belongs only to' "$RO
 snap_out=$(cd "$DOC/project-x/wp-devkit" && realpath -m ../../project-x-snapshots/smoke.md)
 site_root=$(cd "$DOC/project-x" && pwd)
 assert "documented smoke output stays outside the site" test "${snap_out#"$site_root"/}" = "$snap_out"
+
+say "snapshot publish is atomic and private"
+SNAP_SITE="$ROOT/snap-site"
+mkdir -p "$SNAP_SITE/wp-devkit/bin"
+cp "$REPO/wp-devkit/bin/wp-devkit-snapshot.sh" "$REPO/wp-devkit/bin/wp-devkit-lib.sh" "$SNAP_SITE/wp-devkit/bin/"
+chmod +x "$SNAP_SITE"/wp-devkit/bin/*.sh
+mkdir -p "$ROOT/snapbin"
+cat > "$ROOT/snapbin/docker" <<'EOF'
+#!/bin/sh
+if [ "${SNAP_FAIL:-0}" = 1 ]; then
+  printf 'partial\n'
+  echo "export failed" >&2
+  exit 1
+fi
+if [ "${SNAP_RACE:-0}" = 1 ]; then
+  printf 'stolen\n' > "$SNAP_RACE_DEST"
+  chmod 644 "$SNAP_RACE_DEST"
+fi
+printf '%s\n' '/*M!999999\- enable the sandbox mode */' "INSERT INTO t VALUES ('enable the sandbox mode');"
+EOF
+chmod 755 "$ROOT/snapbin/docker"
+PATH="$ROOT/snapbin:$PATH" "$SNAP_SITE/wp-devkit/bin/wp-devkit-snapshot.sh" initial >"$ROOT/snap-ok.txt" 2>&1
+assert "snapshot export succeeds" test -s "$ROOT/snap-site-snapshots/initial.sql"
+assert "snapshot is mode 600" test "$(stat -c %a "$ROOT/snap-site-snapshots/initial.sql")" = "600"
+assert "snapshot drops the sandbox directive" test -z "$(grep -E '^[[:space:]]*/\*M!999999\\- enable the sandbox mode \*/[[:space:]]*$' "$ROOT/snap-site-snapshots/initial.sql" || true)"
+grep -q 'enable the sandbox mode' "$ROOT/snap-site-snapshots/initial.sql" && ok "snapshot keeps legitimate SQL" || bad "snapshot keeps legitimate SQL"
+assert "snapshot leaves no temporary file" test -z "$(find "$ROOT/snap-site-snapshots" -name '.initial.*' -print -quit)"
+printf 'keep-original\n' > "$ROOT/snap-site-snapshots/keep.sql"
+set +e
+PATH="$ROOT/snapbin:$PATH" "$SNAP_SITE/wp-devkit/bin/wp-devkit-snapshot.sh" keep >"$ROOT/snap-exists.txt" 2>&1
+snap_exists_code=$?
+SNAP_FAIL=1 PATH="$ROOT/snapbin:$PATH" "$SNAP_SITE/wp-devkit/bin/wp-devkit-snapshot.sh" broken >"$ROOT/snap-fail.txt" 2>&1
+snap_fail_code=$?
+set -e
+assert "existing snapshot is refused" test "$snap_exists_code" -ne 0
+assert "existing snapshot is unchanged" grep -qx 'keep-original' "$ROOT/snap-site-snapshots/keep.sql"
+assert "failed snapshot exits non-zero" test "$snap_fail_code" -ne 0
+assert "failed snapshot creates no final file" test ! -e "$ROOT/snap-site-snapshots/broken.sql"
+assert "failed snapshot leaves no temporary file" test -z "$(find "$ROOT/snap-site-snapshots" -name '.broken.*' -print -quit)"
+race_dest="$ROOT/snap-site-snapshots/race.sql"
+set +e
+SNAP_RACE=1 SNAP_RACE_DEST="$race_dest" PATH="$ROOT/snapbin:$PATH" "$SNAP_SITE/wp-devkit/bin/wp-devkit-snapshot.sh" race >"$ROOT/snap-race.txt" 2>&1
+snap_race_code=$?
+set -e
+assert "snapshot race exits non-zero" test "$snap_race_code" -ne 0
+assert "snapshot race leaves the existing file" grep -qx 'stolen' "$race_dest"
+assert "snapshot race does not chmod the existing file" test "$(stat -c %a "$race_dest")" = "644"
+assert "snapshot race leaves no temporary file" test -z "$(find "$ROOT/snap-site-snapshots" -name '.race.*' -print -quit)"
+
+say "DB_HOST mismatch stays generic"
+printf "<?php define('DB_HOST', 'db.secret.example');\n" > "$ROOT/dbhost-config.php"
+db_status=$(bash -c 'source "$1"; wp_devkit_db_host_status "$2"' _ "$REPO/wp-devkit/bin/wp-devkit-lib.sh" "$ROOT/dbhost-config.php")
+assert "mismatched DB_HOST status is generic" test "$db_status" = "MISMATCH"
+mkdir -p "$ROOT/dbhost"
+cp "$ROOT/dbhost-config.php" "$ROOT/dbhost/wp-config.php"
+set +e
+db_out=$("$REPO/wp-devkit/bin/wp-devkit-check-db.sh" "$ROOT/dbhost" 2>&1)
+db_code=$?
+set -e
+assert "DB_HOST check fails closed" test "$db_code" -ne 0
+assert "DB_HOST check hides the expression" test -z "$(printf '%s\n' "$db_out" | grep 'db.secret.example' || true)"
+
+say "Docker inspection failure blocks preflight and cleanup"
+mkdir -p "$ROOT/fakedocker"
+cat > "$ROOT/fakedocker/docker" <<'EOF'
+#!/bin/sh
+echo "cannot connect to the docker daemon" >&2
+exit 1
+EOF
+chmod 755 "$ROOT/fakedocker/docker"
+DEAD="$ROOT/dead-copy"
+write_instance "$DEAD" "wpdead${TAG}" "$ROOT/site"
+printf 'still-here\n' > "$DEAD/db-canary"
+set +e
+PATH="$ROOT/fakedocker:$PATH" "$REPO/wp-devkit/bin/wp-devkit-preflight.sh" "$DEAD" >"$ROOT/dead-preflight.txt" 2>&1
+dead_preflight=$?
+PATH="$ROOT/fakedocker:$PATH" "$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$DEAD" >"$ROOT/dead-cleanup.txt" 2>&1
+dead_cleanup=$?
+set -e
+assert "preflight fails when docker inspection fails" test "$dead_preflight" -ne 0
+assert "cleanup fails when docker inspection fails" test "$dead_cleanup" -ne 0
+assert "cleanup did not delete the copy" grep -qx 'still-here' "$DEAD/db-canary"
+grep -q 'could not inspect Docker resources' "$ROOT/dead-cleanup.txt" && ok "cleanup reports inspection failure" || bad "cleanup reports inspection failure"
 
 say "git archive contains only wp-devkit"
 ARCHIVE="$ROOT/archive.txt"

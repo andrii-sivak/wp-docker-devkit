@@ -15,6 +15,6 @@ case "$status" in
     wp_devkit_die "wp-config.php has no DB_HOST define. Fix it before the first start."
     ;;
   *)
-    wp_devkit_die "DB_HOST is ${status}. It must be the internal service name db before this copy starts. From wp-devkit/: docker compose run --rm --no-deps php wp config set DB_HOST db --type=constant"
+    wp_devkit_die "DB_HOST does not use this copy's db service. Change only this copy's wp-config.php before the first start. From its wp-devkit/: docker compose run --rm --no-deps php wp config set DB_HOST db --type=constant"
     ;;
 esac

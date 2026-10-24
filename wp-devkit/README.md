@@ -20,7 +20,7 @@ Verified on Linux x86_64 with Docker Engine 29.5 and Compose v5.1, on 24 October
 
 PHP 7.4 is qualified on this Linux host as `wordpress:php7.4-fpm` index `sha256:0b4b629f3f1389cb4e42570c452188d6f1ebe74d31aee6395bbb010450a0640e`: PHP 7.4.33, Debian 11, image core 6.1.1, `mysqli` present, `pdo_mysql` absent, Composer 2.10.3, WP-CLI 2.12.0, and MariaDB client 10.5.23. A site on that image answered HTTP, and an existing PHP 8.4 site kept the same core hashes after its runtime was switched to this image. Debian 11's security index lists newer client packages whose files return HTTP 404, so the image installs the main-archive versions. That client is older than the Debian 13 client used with PHP 8.4.
 
-MySQL 8.4.13 (`sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69`) installed WordPress and restored that logical snapshot into a second MySQL 8.4 volume. A MariaDB dump was not imported into MySQL. macOS and Windows were not run. The GitHub **Code → Download ZIP** archive was not downloaded, because this repository has no GitHub remote.
+MySQL 8.4.13 (`sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69`) installed WordPress and restored that logical snapshot into a second MySQL 8.4 volume. A MariaDB dump was not imported into MySQL. macOS and Windows were not run. The GitHub **Code → Download ZIP** page has not been verified in the recorded tests. The repository does have a GitHub remote.
 
 `pdo_mysql` is not installed. Rebuild with `INSTALL_PDO_MYSQL=1` in `.env` when a project needs it.
 
@@ -83,7 +83,7 @@ There is one baseline and one candidate. Each has its own `wp-devkit/`, Compose 
 
 That export needs the source database running and reachable. If it is not, the export stops. Start or repair that database yourself, then run the snapshot command again. DevKit does not start, repair, or reconfigure the original database. If you already have a suitable `.sql` dump, put it in `project-x-snapshots/` and skip another export. `bin/wp-devkit-snapshot.sh` uses WP-CLI inside the DevKit PHP container. On a source that is not running under DevKit, an existing client such as `mariadb-dump` is enough. Do not copy raw database files, and do not install tools only to obtain WP-CLI.
 
-Do not edit the source files or the source database while you take the snapshot and restore it into both copies. The toolkit does not lock or watch the source. A later edit of the source is not copied into the siblings. A copy keeps the database name, user, and password it found in `wp-config.php` when those values are hardcoded. Before the first start or restore, `bin/wp-devkit-check-db.sh` must show that `DB_HOST` is this copy's `db` service. If the check prints another host, change only that copy's `wp-config.php`, never the original. `.env` does not override a hardcoded `DB_HOST`.
+Do not edit the source files or the source database while you take the snapshot and restore it into both copies. The toolkit does not lock or watch the source. A later edit of the source is not copied into the siblings. A copy keeps the database name, user, and password it found in `wp-config.php` when those values are hardcoded. Before the first start or restore, that copy's `DB_NAME`, `DB_USER`, `DB_PASSWORD`, and `DB_HOST` must match its own database service, not the source host. `bin/wp-devkit-check-db.sh` accepts `DB_HOST` only when it is the service name `db` or the DevKit `getenv_docker( 'WORDPRESS_DB_HOST' )` form, and it does not print other values. If the check fails, change only that copy's `wp-config.php`, never the original. `.env` does not override a hardcoded `DB_HOST`. The copy writes `.env` as mode `600`. The instance marker and metadata stay mode `644`.
 
 From the source `wp-devkit/` directory:
 
@@ -137,7 +137,7 @@ Confirm the baseline answers before you change the candidate. If the baseline fa
 | Dimension | Command | Leave unchanged |
 | --- | --- | --- |
 | PHP | Set `PHP_BASE_IMAGE` in the candidate `wp-devkit/.env`, set a distinct `PHP_IMAGE`, then `docker compose build && docker compose up -d` from that `wp-devkit/` | Core files |
-| WordPress | `docker compose exec php wp core check-update`, then `docker compose exec php wp core update` for the offer WP-CLI selects, or `wp core update --version=7.1.3` for one exact release. Then `wp core update-db` when WordPress asks. Record `wp core version`. `wp core update --version=latest` is not a version number and leaves the site unchanged | Plugins, PHP image, database volume |
+| WordPress | On the candidate only, core files, `wp-config-sample.php`, and `wp-content/languages/` must be writable by uid 33. Do not chown the whole tree. Then `docker compose exec php wp core check-update`, `wp core update` for the offer WP-CLI selects, or `wp core update --version=7.1.3` for one exact release, then `wp core update-db` when WordPress asks. Record `wp core version` and `wp core verify-checksums`. A failed update can leave partial files. `wp core update --version=latest` is not a version number and leaves the site unchanged | Plugins, PHP image, database volume |
 | Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh --target ../../project-x-candidate ../../project-x-snapshots/initial.sql`. Do not copy `/var/lib/mysql` | Files |
 | Plugin | `docker compose exec php wp plugin update <slug>` | Other plugins |
 

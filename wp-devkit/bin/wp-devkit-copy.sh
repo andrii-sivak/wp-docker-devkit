@@ -79,6 +79,9 @@ done < <(find "$source_dir" -mindepth 1 -maxdepth 1 -printf '%f\n')
 if [[ "$uploads" == exclude ]]; then
   excludes+=(--exclude "./wp-content/uploads")
 fi
+# The copy-specific .env is written afterward as mode 600. Do not place the
+# source file in the destination first; an interrupt would leave it behind.
+excludes+=(--exclude "./wp-devkit/.env")
 
 src_project=$(wp_devkit_env_project "$source_kit/.env" || true)
 tar_project=()
@@ -160,7 +163,14 @@ for line in lines:
 for name, value in keys.items():
     if name not in seen:
         out.append(f"{name}={value}")
-open(env_path, "w", encoding="utf-8").write("\n".join(out) + "\n")
+import os
+payload = ("\n".join(out) + "\n").encode()
+fd = os.open(env_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+try:
+    os.write(fd, payload)
+finally:
+    os.close(fd)
+os.chmod(env_path, 0o600)
 open(f"{stage}/.wp-devkit-instance", "w", encoding="utf-8").write(project + "\n")
 open(f"{stage}/.wp-devkit-meta", "w", encoding="utf-8").write(
     f"project={project}\nhttp_port={port}\nold_url={old_url}\nnew_url={url}\nsource={source}\nuploads={uploads}\n"
@@ -171,13 +181,14 @@ uid=$(id -u)
 gid=$(id -g)
 if [[ -w "$kit" ]]; then
   cp "$stage/.wp-devkit-instance" "$stage/.wp-devkit-meta" "$stage/.env" "$kit/"
-  chmod 644 "$kit/.wp-devkit-instance" "$kit/.wp-devkit-meta" "$kit/.env"
+  chmod 644 "$kit/.wp-devkit-instance" "$kit/.wp-devkit-meta"
+  chmod 600 "$kit/.env"
 else
   docker compose --project-directory "$source_kit" ${src_project:+--project-name "$src_project"} run --rm --no-deps -T --user 0 \
     --entrypoint sh \
     -v "$stage:/stage:ro" \
     -v "$kit:/kit" \
-    php -c "cp /stage/.wp-devkit-instance /stage/.wp-devkit-meta /stage/.env /kit/ && chown ${uid}:${gid} /kit/.wp-devkit-instance /kit/.wp-devkit-meta /kit/.env && chmod 644 /kit/.wp-devkit-instance /kit/.wp-devkit-meta /kit/.env"
+    php -c "cp /stage/.wp-devkit-instance /stage/.wp-devkit-meta /stage/.env /kit/ && chown ${uid}:${gid} /kit/.wp-devkit-instance /kit/.wp-devkit-meta /kit/.env && chmod 644 /kit/.wp-devkit-instance /kit/.wp-devkit-meta && chmod 600 /kit/.env"
 fi
 
 if [[ "$uploads" == exclude ]]; then
