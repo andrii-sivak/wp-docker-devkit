@@ -19,9 +19,9 @@ required=(
   wp-admin/includes/admin.php
 )
 
-# Top-level names that ship with this template or are created by its scripts.
+# A new WordPress root may contain only the toolkit directory.
 # Anything else, without a complete core, is an incomplete site.
-allow='^(compose\.yaml|Dockerfile|\.dockerignore|\.env|\.env\.example|\.gitattributes|README\.md|nginx|php|bin|prompt|examples|\.wp-devkit-instance|\.wp-devkit-meta)$'
+allow='^(wp-devkit)$'
 
 all_required=1
 any_required=0
@@ -66,7 +66,7 @@ else
 fi
 
 if [[ "$state" == incomplete ]]; then
-  echo "wp-devkit: refusing to start. This tree is not a complete WordPress site and is not an empty template directory." >&2
+  echo "wp-devkit: refusing to start. This tree is not a complete WordPress site and is not a root whose only entry is wp-devkit/." >&2
   echo "wp-devkit: the upstream entrypoint would copy core into an incomplete tree. No files were changed." >&2
   if [[ ${#missing[@]} -gt 0 ]]; then
     echo "wp-devkit: missing or empty core files:" >&2
@@ -89,7 +89,7 @@ if [[ "$state" == complete ]]; then
     done
   fi
 else
-  echo "wp-devkit: site state=greenfield; upstream entrypoint may copy core into this template directory." >&2
+  echo "wp-devkit: site state=greenfield; upstream entrypoint may copy core into this WordPress root." >&2
 fi
 
 # /usr/local/sbin/php-fpm would win over the writable-directory shim otherwise.

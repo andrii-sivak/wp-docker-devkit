@@ -3,19 +3,30 @@
 # Exit 0 when no check is FAIL or ERROR. Exit 1 when any check is FAIL or ERROR.
 set -Eeuo pipefail
 source "$(dirname "$0")/wp-devkit-lib.sh"
-root=$(wp_devkit_root_from_script)
+site=$(wp_devkit_site_from_script)
+kit=$(wp_devkit_kit_from_script)
 output=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    --root) root=$(cd "$2" && pwd); shift 2 ;;
+    --root)
+      if [[ -f "$2/wp-devkit/compose.yaml" ]]; then
+        site=$(cd "$2" && pwd)
+        kit="$site/wp-devkit"
+      else
+        kit=$(cd "$2" && pwd)
+        site=$(dirname "$kit")
+      fi
+      shift 2
+      ;;
     --output) output=$2; shift 2 ;;
     *) wp_devkit_die "unknown argument: $1" ;;
   esac
 done
+root=$site
 
 port=8080
-if [[ -f "$root/.env" ]]; then
-  value=$(grep -E '^HTTP_PORT=' "$root/.env" | tail -1 | cut -d= -f2- || true)
+if [[ -f "$kit/.env" ]]; then
+  value=$(grep -E '^HTTP_PORT=' "$kit/.env" | tail -1 | cut -d= -f2- || true)
   [[ -n "$value" ]] && port=$value
 fi
 base="http://127.0.0.1:${port}"

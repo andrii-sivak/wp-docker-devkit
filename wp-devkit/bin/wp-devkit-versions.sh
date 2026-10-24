@@ -2,7 +2,11 @@
 set -Eeuo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 if [[ $# -gt 0 ]]; then
-  root=$(cd "$1" && pwd)
+  if [[ -f "$1/wp-devkit/compose.yaml" ]]; then
+    root=$(cd "$1/wp-devkit" && pwd)
+  else
+    root=$(cd "$1" && pwd)
+  fi
 fi
 compose=(docker compose --project-directory "$root")
 {

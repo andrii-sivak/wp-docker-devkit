@@ -22,9 +22,10 @@ assert() {
 cleanup() {
   docker rm -f wpdevkit-safety-nginx >/dev/null 2>&1 || true
   docker rmi wpdevkit-context-check >/dev/null 2>&1 || true
-  if [[ -d "$ROOT/own-src" ]]; then
-    docker compose --project-directory "$ROOT/own-src" down --remove-orphans >/dev/null 2>&1 || true
+  if [[ -d "$ROOT/own-src/wp-devkit" ]]; then
+    docker compose --project-directory "$ROOT/own-src/wp-devkit" down --remove-orphans >/dev/null 2>&1 || true
   fi
+  docker rm -f wpdevkit-safety-foreign >/dev/null 2>&1 || true
   docker run --rm -v "$ROOT:/work" alpine:3.20 rm -rf /work >/dev/null 2>&1 || true
   rm -rf "$ROOT"
 }
@@ -32,18 +33,18 @@ trap cleanup EXIT
 
 write_instance() {
   local dest=$1 project=$2 source=$3
-  mkdir -p "$dest"
-  printf '%s\n' "$project" > "$dest/.wp-devkit-instance"
-  cat > "$dest/.wp-devkit-meta" <<EOF
+  mkdir -p "$dest/wp-devkit"
+  printf '%s\n' "$project" > "$dest/wp-devkit/.wp-devkit-instance"
+  cat > "$dest/wp-devkit/.wp-devkit-meta" <<EOF
 project=$project
 http_port=18080
 old_url=http://127.0.0.1:18080
 new_url=http://127.0.0.1:18081
 source=$source
 EOF
-  printf 'COMPOSE_PROJECT_NAME=%s\nHTTP_PORT=18081\n' "$project" > "$dest/.env"
+  printf 'COMPOSE_PROJECT_NAME=%s\nHTTP_PORT=18081\n' "$project" > "$dest/wp-devkit/.env"
+  printf 'name: %s\nservices: {}\n' "$project" > "$dest/wp-devkit/compose.yaml"
   printf "<?php define('DB_HOST', 'db');\n" > "$dest/wp-config.php"
-  printf 'services: {}\n' > "$dest/compose.yaml"
   printf 'canary-row\n' > "$dest/db-canary"
 }
 
@@ -52,8 +53,8 @@ ORIGIN="$ROOT/original"
 mkdir -p "$ORIGIN/bin" "$ORIGIN"
 printf 'original-db-row\n' > "$ORIGIN/db-canary"
 printf "<?php define('DB_HOST', 'localhost');\n" > "$ORIGIN/wp-config.php"
-cp "$REPO/bin/wp-devkit-restore.sh" "$ORIGIN/bin/"
-cp "$REPO/bin/wp-devkit-lib.sh" "$ORIGIN/bin/"
+cp "$REPO/wp-devkit/bin/wp-devkit-restore.sh" "$ORIGIN/bin/"
+cp "$REPO/wp-devkit/bin/wp-devkit-lib.sh" "$ORIGIN/bin/"
 chmod +x "$ORIGIN/bin/"*.sh
 SNAP="$ROOT/snap.sql"
 printf 'INSERT INTO probe VALUES (1);\n' > "$SNAP"
@@ -76,8 +77,8 @@ PATH="$SHIM:$PATH" "$ORIGIN/bin/wp-devkit-restore.sh" --target "$ORIGIN" "$SNAP"
 code_origin=$?
 BAD="$ROOT/bad-instance"
 write_instance "$BAD" "wpdevkitbad" "$ORIGIN"
-printf 'COMPOSE_PROJECT_NAME=otherproject\n' > "$BAD/.env"
-PATH="$SHIM:$PATH" "$REPO/bin/wp-devkit-restore.sh" --target "$BAD" "$SNAP" >"$ROOT/restore-mismatch.txt" 2>&1
+printf 'COMPOSE_PROJECT_NAME=otherproject\n' > "$BAD/wp-devkit/.env"
+PATH="$SHIM:$PATH" "$REPO/wp-devkit/bin/wp-devkit-restore.sh" --target "$BAD" "$SNAP" >"$ROOT/restore-mismatch.txt" 2>&1
 code_mismatch=$?
 set -e
 assert "restore without --target exits non-zero" test "$code_notarget" -ne 0
@@ -85,44 +86,41 @@ assert "restore of the original exits non-zero" test "$code_origin" -ne 0
 assert "restore with mismatched project exits non-zero" test "$code_mismatch" -ne 0
 assert "original database canary unchanged" grep -qx 'original-db-row' "$ORIGIN/db-canary"
 assert "refused restore did not call docker" test ! -s "$LOG"
-grep -q 'missing .wp-devkit-instance' "$ROOT/restore-origin.txt" && ok "original refusal names the marker" || bad "original refusal names the marker"
+grep -q 'missing wp-devkit/.wp-devkit-instance' "$ROOT/restore-origin.txt" && ok "original refusal names the marker" || bad "original refusal names the marker"
 
-say "cleanup default and custom workdirs"
-unset WP_DEVKIT_WORKDIR
+say "cleanup refuses the source and a foreign compose project"
 SITE="$ROOT/site"
 mkdir -p "$SITE"
 printf 'original-db-row\n' > "$SITE/db-canary"
-DEFAULT_WORK="$ROOT/wp-devkit-work"
-INST="$DEFAULT_WORK/instances/one"
+INST="$ROOT/site-baseline"
 write_instance "$INST" "wpdevkitone" "$SITE"
 UNRELATED="$ROOT/unrelated-project"
 mkdir -p "$UNRELATED"
 printf 'keep-me\n' > "$UNRELATED/data"
-assert "default-workdir cleanup removes the instance" "$REPO/bin/wp-devkit-cleanup.sh" "$INST"
-assert "default-workdir instance directory is gone" test ! -d "$INST"
-assert "original canary survives default cleanup" grep -qx 'original-db-row' "$SITE/db-canary"
-assert "unrelated directory survives default cleanup" grep -qx 'keep-me' "$UNRELATED/data"
-assert "cleanup did not create a nested workdir" test ! -d "$DEFAULT_WORK/wp-devkit-work"
+assert "cleanup removes the sibling copy" "$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$INST"
+assert "sibling copy directory is gone" test ! -d "$INST"
+assert "original canary survives cleanup" grep -qx 'original-db-row' "$SITE/db-canary"
+assert "unrelated directory survives cleanup" grep -qx 'keep-me' "$UNRELATED/data"
 
-export WP_DEVKIT_WORKDIR="$ROOT/custom-work"
-mkdir -p "$WP_DEVKIT_WORKDIR"
-CUSTOM="$WP_DEVKIT_WORKDIR/instances/two"
-write_instance "$CUSTOM" "wpdevkittwo" "$SITE"
-OUTSIDE="$ROOT/outside/instances/nope"
-write_instance "$OUTSIDE" "wpdevkitnope" "$SITE"
+FOREIGN="$ROOT/site-candidate"
+write_instance "$FOREIGN" "wpdevkitforeign" "$SITE"
+docker run -d --name wpdevkit-safety-foreign \
+  --label com.docker.compose.project=wpdevkitforeign \
+  --label com.docker.compose.project.working_dir=/tmp/not-this-kit \
+  alpine:3.20 sleep 120 >/dev/null
 set +e
-"$REPO/bin/wp-devkit-cleanup.sh" "$OUTSIDE" >"$ROOT/cleanup-outside.txt" 2>&1
-code_outside=$?
-"$REPO/bin/wp-devkit-cleanup.sh" "$SITE" >"$ROOT/cleanup-site.txt" 2>&1
+"$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$FOREIGN" >"$ROOT/cleanup-foreign.txt" 2>&1
+code_foreign=$?
+"$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$SITE" >"$ROOT/cleanup-site.txt" 2>&1
 code_site=$?
 set -e
-assert "cleanup outside the custom workdir exits non-zero" test "$code_outside" -ne 0
+assert "cleanup with a foreign compose owner exits non-zero" test "$code_foreign" -ne 0
+assert "foreign-owned copy was not deleted" test -f "$FOREIGN/db-canary"
 assert "cleanup of the original exits non-zero" test "$code_site" -ne 0
-assert "outside instance still exists" test -f "$OUTSIDE/db-canary"
-assert "custom-workdir cleanup removes the instance" "$REPO/bin/wp-devkit-cleanup.sh" "$CUSTOM"
-assert "custom instance directory is gone" test ! -d "$CUSTOM"
-assert "original canary survives custom cleanup" grep -qx 'original-db-row' "$SITE/db-canary"
-unset WP_DEVKIT_WORKDIR
+assert "original canary survives refused cleanup" grep -qx 'original-db-row' "$SITE/db-canary"
+docker rm -f wpdevkit-safety-foreign >/dev/null
+"$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$FOREIGN" >"$ROOT/cleanup-foreign-after.txt" 2>&1
+assert "cleanup succeeds after the foreign resource is gone" test ! -d "$FOREIGN"
 
 say "brownfield classification"
 if ! docker image inspect wp-devkit-php:8.4 >/dev/null 2>&1; then
@@ -137,7 +135,7 @@ else
   before=$(find "$STUB" -type f | wc -l)
   set +e
   docker run --rm \
-    -v "$REPO/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
+    -v "$REPO/wp-devkit/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
     -v "$STUB:/var/www/html" \
     --entrypoint wp-devkit-entrypoint.sh \
     wp-devkit-php:8.4 php-fpm -v >"$ROOT/stub.txt" 2>&1
@@ -155,7 +153,7 @@ else
   printf '<?php echo "keep";\n' > "$FULL/wp-content/plugins/custom/plugin.php"
   plugin_hash=$(sha256sum "$FULL/wp-content/plugins/custom/plugin.php" | awk '{print $1}')
   docker run --rm \
-    -v "$REPO/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
+    -v "$REPO/wp-devkit/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
     -v "$FULL:/var/www/html" \
     --entrypoint wp-devkit-entrypoint.sh \
     wp-devkit-php:8.4 php-fpm -v >"$ROOT/full.txt" 2>&1
@@ -164,10 +162,10 @@ else
   assert "custom plugin unchanged on complete start" test "$plugin_hash" = "$plugin_after"
 
   EMPTY="$ROOT/empty-template"
-  mkdir -p "$EMPTY"
-  printf 'services: {}\n' > "$EMPTY/compose.yaml"
+  mkdir -p "$EMPTY/wp-devkit"
+  printf 'kit\n' > "$EMPTY/wp-devkit/README.md"
   docker run --rm \
-    -v "$REPO/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
+    -v "$REPO/wp-devkit/bin/wp-devkit-entrypoint.sh:/usr/local/bin/wp-devkit-entrypoint.sh:ro" \
     -v "$EMPTY:/var/www/html" \
     --entrypoint wp-devkit-entrypoint.sh \
     wp-devkit-php:8.4 php-fpm -v >"$ROOT/empty.txt" 2>&1
@@ -180,25 +178,43 @@ if ! docker image inspect wp-devkit-php:8.4 >/dev/null 2>&1; then
   skip "copy image wp-devkit-php:8.4 is not present"
 else
   OWN_SRC="$ROOT/own-src"
-  mkdir -p "$OWN_SRC"
-  tar -C "$REPO" -cf - compose.yaml Dockerfile .dockerignore .env.example nginx php bin prompt examples README.md .gitattributes | tar -C "$OWN_SRC" -xf -
-  chmod +x "$OWN_SRC"/bin/*.sh
-  printf 'COMPOSE_PROJECT_NAME=wpdevkitown\n' > "$OWN_SRC/.env"
+  mkdir -p "$OWN_SRC/wp-devkit" "$OWN_SRC/old-baseline"
+  tar -C "$REPO/wp-devkit" -cf - . | tar -C "$OWN_SRC/wp-devkit" -xf -
+  chmod +x "$OWN_SRC"/wp-devkit/bin/*.sh
+  printf 'COMPOSE_PROJECT_NAME=wpdevkitown\nPHP_IMAGE=wp-devkit-php:8.4\n' > "$OWN_SRC/wp-devkit/.env"
   printf 'user-owned\n' > "$OWN_SRC/owned-by-user.txt"
   printf 'other-owned\n' > "$OWN_SRC/owned-by-33.txt"
+  printf 'do-not-copy\n' > "$OWN_SRC/old-baseline/secret.txt"
   docker run --rm -v "$OWN_SRC/owned-by-33.txt:/file" alpine:3.20 chown 33:33 /file
   src_user=$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-user.txt")
   src_other=$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-33.txt")
-  export WP_DEVKIT_WORKDIR="$ROOT/own-work"
-  mkdir -p "$WP_DEVKIT_WORKDIR"
-  OWN_DEST="$WP_DEVKIT_WORKDIR/instances/own"
-  "$OWN_SRC/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --dest "$OWN_DEST" --project wpdevkitown2 --port 18099 \
+  OWN_DEST="$ROOT/own-src-baseline"
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project wpdevkitown2 --port 18099 \
     --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18099" >"$ROOT/copy-own.txt" 2>&1
   assert "source user-owned file unchanged" test "$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-user.txt")" = "$src_user"
   assert "source uid 33 file unchanged" test "$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-33.txt")" = "$src_other"
   assert "copy keeps user ownership" test "$(stat -c '%u:%g' "$OWN_DEST/owned-by-user.txt")" = "$(stat -c '%u:%g' "$OWN_SRC/owned-by-user.txt")"
   assert "copy keeps uid 33 ownership" test "$(stat -c '%u:%g' "$OWN_DEST/owned-by-33.txt")" = "33:33"
-  unset WP_DEVKIT_WORKDIR
+  assert "copy root is not mode 1777" test "$(stat -c '%a' "$OWN_DEST")" != "1777"
+  assert "prior baseline directory was not copied" test ! -e "$OWN_DEST/old-baseline/secret.txt"
+  set +e
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project wpdevkitown3 --port 18097 \
+    --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18097" >"$ROOT/copy-exists.txt" 2>&1
+  code_exists=$?
+  set -e
+  assert "existing destination is refused" test "$code_exists" -ne 0
+  docker run -d --name wpdevkit-safety-foreign \
+    --label com.docker.compose.project=wpdevkitclash \
+    --label com.docker.compose.project.working_dir=/tmp/other-kit \
+    alpine:3.20 sleep 120 >/dev/null
+  set +e
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --dest "$ROOT/own-src-candidate" --project wpdevkitclash --port 18096 \
+    --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18096" >"$ROOT/copy-clash.txt" 2>&1
+  code_clash=$?
+  set -e
+  docker rm -f wpdevkit-safety-foreign >/dev/null
+  assert "duplicate compose project name is refused" test "$code_clash" -ne 0
+  assert "clashing destination was not created" test ! -e "$ROOT/own-src-candidate"
 fi
 
 say "nginx denies sensitive files and still serves uploads"
@@ -207,8 +223,9 @@ if ! docker image inspect "$NGINX_IMAGE" >/dev/null 2>&1; then
   skip "nginx image is not present"
 else
   WEB="$ROOT/web"
-  mkdir -p "$WEB/wp-content/uploads/2024" "$WEB/.well-known" "$WEB/.git"
+  mkdir -p "$WEB/wp-content/uploads/2024" "$WEB/.well-known/acme-challenge" "$WEB/.git" "$WEB/wp-devkit"
   printf 'secret\n' > "$WEB/.env"
+  printf 'secret\n' > "$WEB/wp-devkit/.env"
   printf 'secret\n' > "$WEB/.git/HEAD"
   printf '<?php\n' > "$WEB/wp-config.php"
   printf '<?php\n' > "$WEB/wp-config.php.bak"
@@ -216,12 +233,17 @@ else
   printf '<?php echo "EXECUTED";\n' > "$WEB/wp-content/uploads/2024/shell.php"
   printf '<?php echo "EXECUTED";\n' > "$WEB/wp-content/uploads/shell.phtml"
   printf 'ok\n' > "$WEB/.well-known/note.txt"
+  printf 'challenge\n' > "$WEB/.well-known/acme-challenge/token"
+  printf 'secret\n' > "$WEB/.well-known/.env"
+  printf 'secret\n' > "$WEB/.well-known/dump.sql"
+  printf '<?php\n' > "$WEB/.well-known/wp-config.php"
   printf 'home\n' > "$WEB/index.html"
+  printf 'readme\n' > "$WEB/wp-devkit/README.md"
   docker rm -f wpdevkit-safety-nginx >/dev/null 2>&1 || true
   docker run -d --name wpdevkit-safety-nginx \
     --add-host php:127.0.0.1 \
     -p 127.0.0.1:18991:80 \
-    -v "$REPO/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro" \
+    -v "$REPO/wp-devkit/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro" \
     -v "$WEB:/var/www/html:ro" \
     "$NGINX_IMAGE" >/dev/null
   sleep 1
@@ -234,6 +256,11 @@ else
   assert "upload phtml denied" test "$(code_of /wp-content/uploads/shell.phtml)" = "403"
   assert "upload static served" test "$(code_of /wp-content/uploads/plain.txt)" = "200"
   assert "well-known served" test "$(code_of /.well-known/note.txt)" = "200"
+  assert "acme challenge served" test "$(code_of /.well-known/acme-challenge/token)" = "200"
+  assert "well-known dotenv denied" test "$(code_of /.well-known/.env)" = "403"
+  assert "well-known sql denied" test "$(code_of /.well-known/dump.sql)" = "403"
+  assert "well-known wp-config denied" test "$(code_of /.well-known/wp-config.php)" = "403"
+  assert "wp-devkit denied" test "$(code_of /wp-devkit/README.md)" = "403"
   assert "homepage static served" test "$(code_of /index.html)" = "200"
   docker rm -f wpdevkit-safety-nginx >/dev/null
 fi
@@ -241,8 +268,8 @@ fi
 say "docker build context excludes site files"
 CTX="$ROOT/context"
 mkdir -p "$CTX/wp-content" "$CTX/php" "$CTX/bin"
-cp "$REPO/.dockerignore" "$CTX/.dockerignore"
-cp "$REPO/php/devkit.ini" "$CTX/php/devkit.ini"
+cp "$REPO/wp-devkit/.dockerignore" "$CTX/.dockerignore"
+cp "$REPO/wp-devkit/php/devkit.ini" "$CTX/php/devkit.ini"
 printf 'SECRET_CANARY\n' > "$CTX/wp-config.php"
 dd if=/dev/zero of="$CTX/wp-content/big.bin" bs=1048576 count=4 status=none
 cat > "$CTX/Dockerfile" <<'EOF'
@@ -268,6 +295,49 @@ PY
 )
 assert "build context stays small" test "$size" -gt 0 -a "$size" -lt 200000
 docker rmi wpdevkit-context-check >/dev/null
+
+say "url adaptation does not execute metadata"
+ADAPT="$ROOT/adapt-copy"
+mkdir -p "$ADAPT/wp-devkit/bin"
+cp "$REPO/wp-devkit/bin/wp-devkit-adapt-urls.sh" "$REPO/wp-devkit/bin/wp-devkit-lib.sh" "$ADAPT/wp-devkit/bin/"
+chmod +x "$ADAPT"/wp-devkit/bin/*.sh
+printf 'adaptproj\n' > "$ADAPT/wp-devkit/.wp-devkit-instance"
+python3 - "$ADAPT/wp-devkit/.wp-devkit-meta" "$ROOT/pwned" <<'PY'
+import sys
+path, pwned = sys.argv[1:]
+open(path, "w", encoding="utf-8").write(
+    "project=adaptproj\n"
+    f"old_url=http://old.example/$(touch {pwned})\n"
+    "new_url=http://new.example/\n"
+    "source=/tmp/not-the-adapt-copy\n"
+)
+PY
+printf 'COMPOSE_PROJECT_NAME=adaptproj\n' > "$ADAPT/wp-devkit/.env"
+: > "$ROOT/adapt-docker.log"
+cat > "$SHIM/docker" <<EOF
+#!/bin/sh
+printf '%s\n' "\$*" >> "$ROOT/adapt-docker.log"
+exit 99
+EOF
+set +e
+PATH="$SHIM:$PATH" "$ADAPT/wp-devkit/bin/wp-devkit-adapt-urls.sh" >"$ROOT/adapt.txt" 2>&1
+code_adapt=$?
+set -e
+assert "metadata url adaptation exits non-zero without a stack" test "$code_adapt" -ne 0
+assert "metadata was not executed" test ! -e "$ROOT/pwned"
+grep -q 'touch' "$ROOT/adapt-docker.log" && ok "metadata reached docker as text" || bad "metadata reached docker as text"
+
+say "git archive contains only wp-devkit"
+ARCHIVE="$ROOT/archive.txt"
+git -C "$REPO" archive --format=tar "$(git -C "$REPO" write-tree)" | tar -t > "$ARCHIVE"
+assert "archive has the skill" grep -qx 'wp-devkit/skills/wp-devkit/SKILL.md' "$ARCHIVE"
+assert "archive has START_HERE" grep -qx 'wp-devkit/START_HERE.md' "$ARCHIVE"
+assert "archive has the public README" grep -qx 'wp-devkit/README.md' "$ARCHIVE"
+assert "archive omits docs" test -z "$(grep -E '^docs/' "$ARCHIVE" || true)"
+assert "archive omits tests" test -z "$(grep -E '^tests/' "$ARCHIVE" || true)"
+assert "archive omits AGENTS.md" test -z "$(grep -x 'AGENTS.md' "$ARCHIVE" || true)"
+other=$(grep -v '^wp-devkit/' "$ARCHIVE" || true)
+assert "archive has no other root entries" test -z "$other"
 
 say "summary pass=$PASS fail=$FAIL skipped=$SKIP"
 [[ "$FAIL" -eq 0 ]]

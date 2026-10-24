@@ -60,10 +60,24 @@ phpMyAdmin 5.2.2 (`sha256:95e01f723b5e55fabf16d0473f1df2354c4c6352b35902b51d6a62
 
 Nginx `/healthz`, PHP-FPM `/ping`, and the database healthcheck became healthy before installation on both the PHP 8.4/MariaDB pilot and the PHP 7.4 project. Compose applied PHP limits of 384m, 0.50 CPU, and 222 PIDs on the acceptance container.
 
+## SPEC v1.1 layout — 24 October 2026
+
+The runtime now lives in `wp-devkit/`. Compose bind-mounts the parent WordPress root. Baseline and candidate are siblings (`project-x-baseline/`, `project-x-candidate/`). Snapshots are `project-x-snapshots/*.sql`. Identity files are `wp-devkit/.wp-devkit-instance`, `.wp-devkit-meta`, and `.env`. URL adaptation reads metadata with the line parser and does not `source` it. Copy roots are not mode 1777. Cleanup and restore require container `com.docker.compose.project.working_dir` to be this copy's `wp-devkit/`. On Compose 5.1.3, volumes and networks do not carry that label; a project name that has only a volume or network is refused. Nginx denies `/wp-devkit/` and sensitive names under `/.well-known/`, and still serves `/.well-known/acme-challenge/token`.
+
+`tests/safety.sh`: 56 PASS, 0 FAIL, 0 SKIPPED. Includes foreign Compose-name refusal, metadata injection left as text, sibling copy permissions, and `git archive` of `git write-tree` (the index). That archive listed only `wp-devkit/` paths, including `START_HERE.md`, `skills/wp-devkit/SKILL.md`, and `README.md`, and omitted `docs/`, `tests/`, and `AGENTS.md`.
+
+`tests/acceptance.sh` with `WP_DEVKIT_ACCEPTANCE` unset (work directory `/tmp/wp-devkit-mvp`): 63 PASS, 0 FAIL. Greenfield root containing only `wp-devkit/` installed WordPress. Sibling baseline and candidate ran together. `hello-dolly` moved from 1.6 to 1.7.2 on the candidate only. Core download 6.8.3 then `wp core update` returned to 7.1.3 on the core copy; the baseline stayed 7.1.3. Cleanup removed only the candidate. The suite's own trap then ran `docker compose down --volumes` for the disposable projects it created.
+
+`tests/qualify-followup.sh` was updated for the new paths and was not re-run. PHP 7.4, the PHP switch, MySQL 8.4, and phpMyAdmin evidence above is from the previous layout.
+
+Claude Code, Codex, Grok, Gemini CLI, and Antigravity were not executed against the skill. Explicit path invocation is what `START_HERE.md` documents. Native discovery was not tested.
+
 ## Not verified
 
-- GitHub **Code → Download ZIP**. `git remote -v` is empty. `git archive HEAD` omits `docs/`, `AGENTS.md`, `.agents/`, `tests/`, and `skills-lock.json`, and includes `README.md`. That is not the GitHub archive.
+- GitHub **Code → Download ZIP**. `git remote -v` is empty. Local `git archive` is not that download. AC-01 stays PENDING.
 - macOS and Windows.
 - `pdo_mysql` (still off unless `INSTALL_PDO_MYSQL=1`).
 - Importing a MariaDB dump into MySQL, or the reverse.
 - Every historical PHP version other than 7.4.33 and 8.4.27.
+- Re-running `tests/qualify-followup.sh` after the directory move.
+- Skill behavior in Claude Code, Codex, Grok, Gemini CLI, and Antigravity.

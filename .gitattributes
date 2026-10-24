@@ -1,3 +1,5 @@
+# GitHub Code → Download ZIP and `git archive` ship only wp-devkit/.
+# Development docs and agent tooling stay tracked in Git.
 /docs export-ignore
 /AGENTS.md export-ignore
 /.agents export-ignore
@@ -7,6 +9,4 @@
 /.scratch export-ignore
 /.gitignore export-ignore
 /.gitattributes export-ignore
-/docs/spec export-ignore
-/docs/agents export-ignore
-/docs/validation export-ignore
+/devkit.zip export-ignore
