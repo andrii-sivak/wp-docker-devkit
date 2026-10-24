@@ -15,16 +15,20 @@ ARG INSTALL_PDO_MYSQL=0
 # The upstream entrypoint must start as root. It repairs a root-owned mount
 # and then runs PHP-FPM workers as www-data (uid 33). Setting USER earlier
 # breaks that contract, so this image intentionally keeps a root entrypoint.
+# Debian 11's security index still lists mariadb-client 10.5.29 and
+# libfcgi-bin 2.4.2-2+deb11u1, but those pool files return HTTP 404.
+# That is an archive mismatch, not a PHP failure. Fall back to the
+# main-archive versions, which are present, and do not keep the pin.
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update \
-    && apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        less \
-        libfcgi-bin \
-        mariadb-client \
-        unzip \
+    && packages='ca-certificates curl less libfcgi-bin mariadb-client unzip' \
+    && if ! apt-get install -y --no-install-recommends $packages; then \
+         printf 'Package: *\nPin: release l=Debian-Security\nPin-Priority: -1\n' \
+           > /etc/apt/preferences.d/wp-devkit-skip-broken-security; \
+         apt-get install -y --no-install-recommends $packages; \
+         rm -f /etc/apt/preferences.d/wp-devkit-skip-broken-security; \
+       fi \
     && if [ "$INSTALL_PDO_MYSQL" = "1" ]; then \
          docker-php-ext-install pdo_mysql; \
        fi \
@@ -45,10 +49,14 @@ COPY php/zz-client.cnf /etc/mysql/conf.d/zz-devkit.cnf
 COPY bin/wp-devkit-entrypoint.sh /usr/local/bin/wp-devkit-entrypoint.sh
 COPY bin/wp-cli-wrapper.sh /usr/local/bin/wp-cli-wrapper.sh
 COPY bin/php-fpm-devkit.sh /usr/local/bin/php-fpm
-RUN chmod 755 /usr/local/bin/wp-devkit-entrypoint.sh /usr/local/bin/wp-cli-wrapper.sh /usr/local/bin/php-fpm \
+COPY bin/sql-client-wrapper.sh /usr/local/bin/sql-client-wrapper.sh
+RUN chmod 755 /usr/local/bin/wp-devkit-entrypoint.sh /usr/local/bin/wp-cli-wrapper.sh /usr/local/bin/php-fpm /usr/local/bin/sql-client-wrapper.sh \
     && mv /usr/local/bin/wp /usr/local/lib/wp-cli.phar \
     && cp /usr/local/bin/wp-cli-wrapper.sh /usr/local/bin/wp \
-    && chmod 755 /usr/local/bin/wp
+    && chmod 755 /usr/local/bin/wp \
+    && for cmd in mysql mariadb mysqldump mariadb-dump; do \
+         cp /usr/local/bin/sql-client-wrapper.sh "/usr/local/bin/$cmd"; \
+       done
 
 WORKDIR /var/www/html
 EXPOSE 9000

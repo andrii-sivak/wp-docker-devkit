@@ -9,6 +9,9 @@ work=$(wp_devkit_work_for "$root")
 mkdir -p "$work/snapshots"
 dest="$work/snapshots/$name.sql"
 wp_devkit_snapshot_is_safe "$dest" "$root"
-docker compose --project-directory "$root" exec -T php wp db export - > "$dest"
+# MariaDB 11.8 writes "/*M!999999\- enable the sandbox mode */".
+# Older MariaDB clients and MySQL reject that line.
+docker compose --project-directory "$root" exec -T php wp db export - \
+  | sed '/enable the sandbox mode/d' > "$dest"
 test -s "$dest" || wp_devkit_die "snapshot is empty: $dest"
 echo "wp-devkit: wrote $dest"

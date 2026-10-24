@@ -7,5 +7,6 @@ snapshot=${1:-}
 [[ -n "$snapshot" && -f "$snapshot" ]] || wp_devkit_die "usage: wp-devkit-restore.sh /path/to/snapshot.sql"
 snapshot=$(wp_devkit_realpath "$snapshot")
 wp_devkit_snapshot_is_safe "$snapshot" "$root"
-docker compose --project-directory "$root" exec -T php wp db import - < "$snapshot"
+sed '/enable the sandbox mode/d' "$snapshot" \
+  | docker compose --project-directory "$root" exec -T php wp db import -
 echo "wp-devkit: imported $snapshot"
