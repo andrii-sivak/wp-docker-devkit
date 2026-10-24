@@ -35,6 +35,7 @@ cleanup() {
   docker rm -f "$NGINX_CNAME" >/dev/null 2>&1 || true
   docker rm -f -v "$DB_CNAME" >/dev/null 2>&1 || true
   docker rmi "$CTX_IMAGE" >/dev/null 2>&1 || true
+  docker volume rm "wpdskeep${TAG}" >/dev/null 2>&1 || true
   if [[ -d "$ROOT/own-src/wp-devkit" ]]; then
     docker compose --project-directory "$ROOT/own-src/wp-devkit" --project-name "$P_OWN" down --remove-orphans >/dev/null 2>&1 || true
   fi
@@ -278,6 +279,74 @@ else
   grep -q '^uploads=exclude$' "$ROOT/up-src-baseline/wp-devkit/.wp-devkit-meta" && ok "baseline records uploads exclude" || bad "baseline records uploads exclude"
   grep -q '^uploads=exclude$' "$ROOT/up-src-candidate/wp-devkit/.wp-devkit-meta" && ok "candidate records uploads exclude" || bad "candidate records uploads exclude"
   assert "source upload unchanged" test "$(sha256sum "$UP/wp-content/uploads/2024/nested/photo.txt" | awk '{print $1}')" = "$photo_hash"
+fi
+
+say "consecutive copies do not keep the helper volume"
+if ! docker image inspect wp-devkit-php:8.4 >/dev/null 2>&1; then
+  skip "consecutive copy image wp-devkit-php:8.4 is not present"
+else
+  SEQ="$ROOT/seq-src"
+  mkdir -p "$SEQ/wp-devkit"
+  tar -C "$REPO/wp-devkit" -cf - . | tar -C "$SEQ/wp-devkit" -xf -
+  chmod +x "$SEQ"/wp-devkit/bin/*.sh
+  rm -f "$SEQ/wp-devkit/.env"
+  printf 'media\n' > "$SEQ/keep.txt"
+  docker volume create "wpdskeep${TAG}" >/dev/null
+  helper_vols_before=$(docker volume ls -q | grep '^wpdevkittar' || true)
+  helper_nets_before=$(docker network ls --format '{{.Name}}' | grep wpdevkittar || true)
+  "$SEQ/wp-devkit/bin/wp-devkit-copy.sh" --source "$SEQ" --role baseline --project "seqb${TAG}" --port 18091 \
+    --new-url "http://127.0.0.1:18091" >"$ROOT/seq-base.txt" 2>&1
+  "$SEQ/wp-devkit/bin/wp-devkit-copy.sh" --source "$SEQ" --role candidate --project "seqc${TAG}" --port 18090 \
+    --new-url "http://127.0.0.1:18090" >"$ROOT/seq-cand.txt" 2>&1
+  helper_vols_after=$(docker volume ls -q | grep '^wpdevkittar' || true)
+  helper_nets_after=$(docker network ls --format '{{.Name}}' | grep wpdevkittar || true)
+  assert "second copy wrote the candidate" test -f "$ROOT/seq-src-candidate/keep.txt"
+  assert "helper volumes match the pre-copy set" test "$helper_vols_before" = "$helper_vols_after"
+  assert "helper networks match the pre-copy set" test "$helper_nets_before" = "$helper_nets_after"
+  assert "unrelated volume survived consecutive copies" docker volume inspect "wpdskeep${TAG}"
+  docker volume rm "wpdskeep${TAG}" >/dev/null
+fi
+
+say "sql client wrapper flags"
+if ! docker image inspect wp-devkit-php:8.4 >/dev/null 2>&1; then
+  skip "sql client wrapper image wp-devkit-php:8.4 is not present"
+else
+  cat > "$ROOT/fake-client" <<'EOF'
+#!/bin/sh
+printf '%s %s\n' "$(basename "$0")" "$*"
+EOF
+  chmod 755 "$ROOT/fake-client"
+  client_mounts=()
+  for cmd in mysql mariadb mysqldump mariadb-dump mysqlcheck mariadb-check; do
+    client_mounts+=(-v "$REPO/wp-devkit/bin/sql-client-wrapper.sh:/usr/local/bin/${cmd}:ro")
+    client_mounts+=(-v "$ROOT/fake-client:/usr/bin/${cmd}:ro")
+  done
+  docker run --rm "${client_mounts[@]}" --entrypoint sh wp-devkit-php:8.4 -c '
+    mysql --no-defaults -e "select 1"
+    mysql -e "select 1"
+    mariadb --no-defaults -e "select 1"
+    mariadb -e "select 1"
+    mysqldump --no-defaults wordpress
+    mysqldump wordpress
+    mariadb-dump --no-defaults wordpress
+    mariadb-dump wordpress
+    mysqlcheck --no-defaults wordpress
+    mysqlcheck wordpress
+    mariadb-check --no-defaults wordpress
+    mariadb-check wordpress
+  ' >"$ROOT/client-args.txt" 2>&1
+  assert "mysql --no-defaults adds --skip-ssl after it" grep -qx 'mysql --no-defaults --skip-ssl -e select 1' "$ROOT/client-args.txt"
+  assert "mysql without --no-defaults is unchanged" grep -qx 'mysql -e select 1' "$ROOT/client-args.txt"
+  assert "mariadb --no-defaults adds --skip-ssl after it" grep -qx 'mariadb --no-defaults --skip-ssl -e select 1' "$ROOT/client-args.txt"
+  assert "mariadb without --no-defaults is unchanged" grep -qx 'mariadb -e select 1' "$ROOT/client-args.txt"
+  assert "mysqldump --no-defaults adds --skip-ssl after it" grep -qx 'mysqldump --no-defaults --skip-ssl wordpress' "$ROOT/client-args.txt"
+  assert "mysqldump without --no-defaults is unchanged" grep -qx 'mysqldump wordpress' "$ROOT/client-args.txt"
+  assert "mariadb-dump --no-defaults adds --skip-ssl after it" grep -qx 'mariadb-dump --no-defaults --skip-ssl wordpress' "$ROOT/client-args.txt"
+  assert "mariadb-dump without --no-defaults is unchanged" grep -qx 'mariadb-dump wordpress' "$ROOT/client-args.txt"
+  assert "mysqlcheck --no-defaults adds --skip-ssl after it" grep -qx 'mysqlcheck --no-defaults --skip-ssl wordpress' "$ROOT/client-args.txt"
+  assert "mysqlcheck without --no-defaults is unchanged" grep -qx 'mysqlcheck wordpress' "$ROOT/client-args.txt"
+  assert "mariadb-check --no-defaults adds --skip-ssl after it" grep -qx 'mariadb-check --no-defaults --skip-ssl wordpress' "$ROOT/client-args.txt"
+  assert "mariadb-check without --no-defaults is unchanged" grep -qx 'mariadb-check wordpress' "$ROOT/client-args.txt"
 fi
 
 say "acceptance override refuses existing data"

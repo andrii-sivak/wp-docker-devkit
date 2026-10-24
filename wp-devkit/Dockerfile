@@ -54,8 +54,10 @@ RUN chmod 755 /usr/local/bin/wp-devkit-entrypoint.sh /usr/local/bin/wp-cli-wrapp
     && mv /usr/local/bin/wp /usr/local/lib/wp-cli.phar \
     && cp /usr/local/bin/wp-cli-wrapper.sh /usr/local/bin/wp \
     && chmod 755 /usr/local/bin/wp \
-    && for cmd in mysql mariadb mysqldump mariadb-dump; do \
-         cp /usr/local/bin/sql-client-wrapper.sh "/usr/local/bin/$cmd"; \
+    && for cmd in mysql mariadb mysqldump mariadb-dump mysqlcheck mariadb-check; do \
+         if [ -x "/usr/bin/$cmd" ]; then \
+           cp /usr/local/bin/sql-client-wrapper.sh "/usr/local/bin/$cmd"; \
+         fi; \
        done
 
 WORKDIR /var/www/html

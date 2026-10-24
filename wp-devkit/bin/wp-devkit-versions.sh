@@ -22,5 +22,13 @@ compose=(docker compose --project-directory "$root")
   echo -n "database="
   "${compose[@]}" exec -T php wp db query "SELECT VERSION();" --skip-column-names
   echo -n "php_image="
-  "${compose[@]}" images php --format '{{.ID}} {{.Repository}}:{{.Tag}}'
+  # Compose 5 only accepts table or json for `images --format`, so a Go
+  # template never printed the image ID. The running container knows both
+  # the image ID and the name it was started as, including a locally built tag.
+  php_cid=$("${compose[@]}" ps -q php | head -n 1)
+  if [[ -z "$php_cid" ]]; then
+    echo "unavailable"
+  else
+    docker inspect --format '{{.Image}} {{.Config.Image}}' "$php_cid"
+  fi
 } 2>&1

@@ -234,6 +234,15 @@ if ! docker compose --project-directory "$SRC/wp-devkit" exec -T php wp core is-
     --skip-email >"$LOG/wp-install.txt" 2>&1 || true
 fi
 assert "wordpress is installed" docker compose --project-directory "$SRC/wp-devkit" exec -T php wp core is-installed
+set +e
+docker compose --project-directory "$SRC/wp-devkit" exec -T php wp db check >"$LOG/db-check.txt" 2>&1
+db_check_code=$?
+set -e
+assert "wp db check succeeds" test "$db_check_code" -eq 0
+grep -q 'OK' "$LOG/db-check.txt" && ok "wp db check reports tables" || bad "wp db check reports tables"
+"$SRC/wp-devkit/bin/wp-devkit-versions.sh" >"$LOG/versions.txt" 2>&1
+assert "versions reports php image id" grep -Eq '^php_image=sha256:[0-9a-f]{64} ' "$LOG/versions.txt"
+grep -q "php_image=sha256:.*wp-devkit-php:${P_SRC}" "$LOG/versions.txt" && ok "versions names the local php image" || bad "versions names the local php image"
 
 docker compose --project-directory "$SRC/wp-devkit" exec -T -u www-data php php -r 'file_put_contents("wp-content/uploads/write-test.txt","ok");'
 assert "www-data can write uploads" test -f "$SRC/wp-content/uploads/write-test.txt"

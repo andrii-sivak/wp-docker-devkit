@@ -83,10 +83,34 @@ fi
 src_project=$(wp_devkit_env_project "$source_kit/.env" || true)
 tar_project=()
 cleanup_tar_project=0
+stage=""
+# The tar extract is a one-off container. When the source has no Compose
+# project name, that container must not keep a project of its own: Compose
+# also creates the named db-data volume, and `down` without --volumes leaves
+# it behind and blocks the next copy. Only this helper project is removed.
+cleanup_copy_resources() {
+  local status=$?
+  local cleanup_err=""
+  # Drop the traps before exiting so a signal exit runs this once via EXIT.
+  trap - EXIT INT TERM
+  if [[ "${cleanup_tar_project:-0}" -eq 1 && -n "${src_project:-}" && -n "${source_kit:-}" ]]; then
+    if ! cleanup_err=$(docker compose --project-directory "$source_kit" --project-name "$src_project" down --volumes --remove-orphans 2>&1); then
+      echo "wp-devkit: warning: could not remove temporary project ${src_project}: ${cleanup_err}" >&2
+    fi
+  fi
+  if [[ -n "${stage:-}" && -d "${stage:-}" ]]; then
+    rm -rf "$stage"
+  fi
+  exit "$status"
+}
+trap cleanup_copy_resources EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 if [[ -n "$src_project" ]]; then
   tar_project=(--project-name "$src_project")
 else
-  src_project="wpdevkittar$(id -u)"
+  src_project="wpdevkittar$(id -u)$$"
+  wp_devkit_assert_project "$src_project"
   wp_devkit_assert_compose_ownership "$source_kit" "$src_project" exclusive
   tar_project=(--project-name "$src_project")
   cleanup_tar_project=1
@@ -105,7 +129,6 @@ fi
 kit="$dest/wp-devkit"
 [[ -d "$kit" ]] || wp_devkit_die "copy has no wp-devkit directory"
 stage=$(mktemp -d)
-trap 'rm -rf "$stage"' EXIT
 env_file="$stage/.env"
 if [[ -f "$source_kit/.env" ]]; then
   cp "$source_kit/.env" "$env_file"
@@ -169,10 +192,6 @@ if [[ "$uploads" == exclude ]]; then
     --entrypoint sh \
     -v "$dest:/dest" \
     php -c "mkdir -p /dest/wp-content/uploads && chown ${up_owner} /dest/wp-content/uploads && chmod ${up_mode} /dest/wp-content/uploads"
-fi
-
-if [[ "$cleanup_tar_project" -eq 1 ]]; then
-  docker compose --project-directory "$source_kit" --project-name "$src_project" down --remove-orphans >/dev/null
 fi
 
 echo "wp-devkit: copied to $dest (project $project, port $port, uploads $uploads)."
