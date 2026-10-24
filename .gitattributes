@@ -1,0 +1,11 @@
+/docs export-ignore
+/AGENTS.md export-ignore
+/.agents export-ignore
+/.claude export-ignore
+/skills-lock.json export-ignore
+/tests export-ignore
+/.scratch export-ignore
+/.gitignore export-ignore
+/docs/spec export-ignore
+/docs/agents export-ignore
+/docs/validation export-ignore

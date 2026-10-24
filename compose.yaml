@@ -1,0 +1,134 @@
+# One environment, one database engine. MariaDB is the default pilot engine.
+# Select MySQL by setting DB_IMAGE to a pinned mysql image in .env.
+# There is no compose.override.yaml. Optional Node.js and phpMyAdmin use profiles.
+
+name: ${COMPOSE_PROJECT_NAME:-wpdevkit}
+
+services:
+  nginx:
+    image: ${NGINX_IMAGE:-nginx:1.30-alpine@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      php:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${HTTP_PORT:-8080}:80"
+    volumes:
+      - .:/var/www/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    mem_limit: ${NGINX_MEM_LIMIT:-128m}
+    cpus: "${NGINX_CPUS:-0.50}"
+    pids_limit: ${NGINX_PIDS_LIMIT:-100}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/healthz | grep -q ok"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+
+  php:
+    build:
+      context: .
+      args:
+        PHP_BASE_IMAGE: ${PHP_BASE_IMAGE:-wordpress:php8.4-fpm@sha256:41fcfa8617e811e41516783bda46046f0945d94d547f346617bbea5e189b30bc}
+        COMPOSER_VERSION: ${COMPOSER_VERSION:-2.10.3}
+        COMPOSER_SHA256: ${COMPOSER_SHA256:-7a2d379d5b8ffdaa028580ef26494c36d2feef4b178d3dd1473a4dbc5e17c8d6}
+        WP_CLI_VERSION: ${WP_CLI_VERSION:-2.12.0}
+        WP_CLI_SHA256: ${WP_CLI_SHA256:-ce34ddd838f7351d6759068d09793f26755463b4a4610a5a5c0a97b68220d85c}
+        INSTALL_PDO_MYSQL: ${INSTALL_PDO_MYSQL:-0}
+    image: ${PHP_IMAGE:-wp-devkit-php:8.4}
+    restart: unless-stopped
+    init: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: ${DB_USER:-wordpress}
+      WORDPRESS_DB_PASSWORD: ${DB_PASSWORD:-wordpress}
+      WORDPRESS_DB_NAME: ${DB_NAME:-wordpress}
+      WORDPRESS_CONFIG_EXTRA: "define('WP_HOME','${WP_HOME:-http://127.0.0.1:8080}'); define('WP_SITEURL','${WP_SITEURL:-http://127.0.0.1:8080}');"
+      WP_DEVKIT_FIX_UPLOAD_PERMS: ${WP_DEVKIT_FIX_UPLOAD_PERMS:-1}
+      WP_CLI_DISABLE_AUTO_CHECK_UPDATE: "1"
+    volumes:
+      - .:/var/www/html
+    mem_limit: ${PHP_MEM_LIMIT:-512m}
+    cpus: "${PHP_CPUS:-1.00}"
+    pids_limit: ${PHP_PIDS_LIMIT:-256}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "SCRIPT_NAME=/ping SCRIPT_FILENAME=/ping REQUEST_METHOD=GET cgi-fcgi -bind -connect 127.0.0.1:9000 | grep -q pong"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+      start_period: 40s
+
+  db:
+    image: ${DB_IMAGE:-mariadb:11.8@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa}
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: ${DB_NAME:-wordpress}
+      MARIADB_USER: ${DB_USER:-wordpress}
+      MARIADB_PASSWORD: ${DB_PASSWORD:-wordpress}
+      MARIADB_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-wordpress-root}
+      MYSQL_DATABASE: ${DB_NAME:-wordpress}
+      MYSQL_USER: ${DB_USER:-wordpress}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-wordpress}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-wordpress-root}
+    volumes:
+      - db-data:/var/lib/mysql
+    mem_limit: ${DB_MEM_LIMIT:-768m}
+    cpus: "${DB_CPUS:-1.00}"
+    pids_limit: ${DB_PIDS_LIMIT:-200}
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "if [ -x /usr/local/bin/healthcheck.sh ]; then healthcheck.sh --connect --innodb_initialized; else mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent; fi"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+
+  node:
+    profiles: ["node"]
+    image: ${NODE_IMAGE:-node:22-alpine@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914}
+    working_dir: /var/www/html
+    volumes:
+      - .:/var/www/html
+    entrypoint: ["sleep", "infinity"]
+    init: true
+    mem_limit: ${NODE_MEM_LIMIT:-512m}
+    cpus: "${NODE_CPUS:-1.00}"
+    pids_limit: ${NODE_PIDS_LIMIT:-200}
+    networks:
+      - internal
+
+  phpmyadmin:
+    profiles: ["pma"]
+    image: ${PMA_IMAGE:-phpmyadmin/phpmyadmin:5.2.2@sha256:95e01f723b5e55fabf16d0473f1df2354c4c6352b35902b51d6a6245e074aee4}
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      PMA_HOST: db
+      PMA_USER: ${DB_USER:-wordpress}
+      PMA_PASSWORD: ${DB_PASSWORD:-wordpress}
+      UPLOAD_LIMIT: 64M
+    ports:
+      - "127.0.0.1:${PMA_PORT:-8081}:80"
+    mem_limit: ${PMA_MEM_LIMIT:-256m}
+    cpus: "${PMA_CPUS:-0.50}"
+    pids_limit: ${PMA_PIDS_LIMIT:-100}
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  db-data:

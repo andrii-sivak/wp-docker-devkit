@@ -1,0 +1,5 @@
+.env
+wp-devkit-work/
+*.sql
+*.sql.gz
+tests/output/
