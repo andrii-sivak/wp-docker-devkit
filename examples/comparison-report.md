@@ -32,10 +32,9 @@ Only `hello-dolly` was updated on `wpdevkitcand`. Core stayed 7.1.3 on both side
 | Command | Exit | Status | Detail |
 | --- | --- | --- | --- |
 | `wp core version` before the change | 0 | PASS | 7.1.3 on the candidate and the baseline |
-| `wp core download --version=6.8.2 --force` | 0 | PASS | Candidate files moved to 6.8.2 |
-| `wp core update --version=6.8.3` | 0 | PASS | Candidate became 6.8.3. Baseline stayed 7.1.3 |
-| `wp core update --version=latest` | 0 | PASS | Printed "WordPress is up to date". `wp core version` stayed 6.8.3. This did not move the candidate to the image's 7.1.3 |
-| `wp core update-db` | 0 | PASS | Ran after the specific update |
+| `wp core download --version=6.8.3 --force` | 0 | PASS | Candidate files moved to 6.8.3 |
+| `wp core update` | 0 | PASS | Resolved to 7.1.3. Baseline stayed 7.1.3. `wp core update --version=latest` is not a version and does not do this |
+| `wp core update-db` | 0 | PASS | Ran after the update |
 
 ## Smoke
 
@@ -51,9 +50,9 @@ Smoke checks do not prove that every feature works.
 
 ## Limits
 
-- PHP 7.4 was not qualified. See the README.
-- MySQL 8.4 accepted a one-row logical script through the MariaDB client with TLS disabled. A WordPress dump was not imported into MySQL.
-- phpMyAdmin was not started.
+- PHP 7.4.33 ran a WordPress site. Its SQL client is MariaDB 10.5.23 from Debian 11 main, because the security-archive packages 404.
+- MySQL 8.4.13 installed WordPress and restored that snapshot into a second MySQL volume. A MariaDB dump was not imported into MySQL.
+- phpMyAdmin 5.2.2 started and logged in.
 - macOS and Windows were not run.
 - Cleanup removed only `wpdevkitcand` and its database volume. The source still answered HTTP. `docker system prune` was not used.
 

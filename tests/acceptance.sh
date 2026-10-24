@@ -282,18 +282,16 @@ assert "core candidate healthy" wait_healthy "$CORE"
 ( cd "$CORE" && bin/wp-devkit-restore.sh "$WORK/snapshots/initial.sql" ) >"$LOG/restore-core.txt" 2>&1
 ( cd "$CORE" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-core.txt" 2>&1
 core_before=$(docker compose --project-directory "$CORE" exec -T php wp core version | tr -d '[:space:]')
-docker compose --project-directory "$CORE" exec -T php wp core download --version=6.8.2 --force >"$LOG/core-download.txt" 2>&1
+docker compose --project-directory "$CORE" exec -T php wp core download --version=6.8.3 --force >"$LOG/core-download.txt" 2>&1
 downloaded=$(docker compose --project-directory "$CORE" exec -T php wp core version | tr -d '[:space:]')
-docker compose --project-directory "$CORE" exec -T php wp core update --version=6.8.3 >"$LOG/core-specific.txt" 2>&1 || true
-docker compose --project-directory "$CORE" exec -T php wp core update --version=latest >"$LOG/core-update.txt" 2>&1 || true
+docker compose --project-directory "$CORE" exec -T php wp core update >"$LOG/core-update.txt" 2>&1 || true
 docker compose --project-directory "$CORE" exec -T php wp core update-db >"$LOG/core-updatedb.txt" 2>&1 || true
 core_after=$(docker compose --project-directory "$CORE" exec -T php wp core version | tr -d '[:space:]')
 base_core=$(docker compose --project-directory "$BASE" exec -T php wp core version | tr -d '[:space:]')
 echo "core initial=$core_before downloaded=$downloaded after=$core_after baseline=$base_core" | tee "$LOG/core-versions.txt"
 assert "baseline core unchanged by candidate update" test "$base_core" = "$core_before"
-assert "specific core update moved off 6.8.2" test "$core_after" != "6.8.2"
-grep -E 'Success|up to date|Updated' "$LOG/core-update.txt" >/dev/null && ok "latest core update completed" || bad "latest core update completed"
-echo "resolved_latest=$core_after" >>"$LOG/core-versions.txt"
+assert "downloaded core is 6.8.3" test "$downloaded" = "6.8.3"
+assert "default core update moved past 6.8.3" test "$core_after" != "6.8.3"
 
 say "smoke"
 ( cd "$SRC" && bin/wp-devkit-smoke.sh --output "$LOG/smoke.md" ) >"$LOG/smoke-stdout.txt" 2>&1

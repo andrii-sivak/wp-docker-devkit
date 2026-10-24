@@ -16,11 +16,11 @@ Verified on Linux x86_64 with Docker Engine 29.5 and Compose v5.1, on 24 October
 | Composer / WP-CLI | 2.10.3 and 2.12.0 | Run inside the PHP 8.4 image. WP-CLI runs as `www-data` |
 | SQL client | MariaDB client 11.8.6 from Debian 13 | Talks to MariaDB 11.8.9. With `skip-ssl`, it also imported a one-row table into MySQL 8.4.13 |
 | Optional Node.js | `node:22-alpine` index `sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914` | `node --version` printed v22.23.4. The profile does not start with the site |
-| Optional phpMyAdmin | `phpmyadmin/phpmyadmin:5.2.2` digest `sha256:95e01f723b5e55fabf16d0473f1df2354c4c6352b35902b51d6a6245e074aee4` | Profile only. The container was not started on this host |
+| Optional phpMyAdmin | `phpmyadmin/phpmyadmin:5.2.2` digest `sha256:95e01f723b5e55fabf16d0473f1df2354c4c6352b35902b51d6a6245e074aee4` | Started with `--profile pma` and logged in to MySQL 8.4 |
 
-PHP 7.4 is still the agreed minimum and is **not qualified**. The `wordpress:php7.4-fpm` index `sha256:0b4b629f3f1389cb4e42570c452188d6f1ebe74d31aee6395bbb010450a0640e` runs PHP 7.4.33 on Debian 11, and Composer 2.10.3 and WP-CLI 2.12.0 both start. Building this Dockerfile on that base fails: `apt-get` cannot download the Debian 11 security packages for `mariadb-client` (HTTP 404). No SQL client and no FPM ping helper were installed. Do not treat a PHP 8.4 result as PHP 7.4 support.
+PHP 7.4 is qualified on this Linux host as `wordpress:php7.4-fpm` index `sha256:0b4b629f3f1389cb4e42570c452188d6f1ebe74d31aee6395bbb010450a0640e`: PHP 7.4.33, Debian 11, image core 6.1.1, `mysqli` present, `pdo_mysql` absent, Composer 2.10.3, WP-CLI 2.12.0, and MariaDB client 10.5.23. A site on that image answered HTTP, and an existing PHP 8.4 site kept the same core hashes after its runtime was switched to this image. Debian 11's security index lists newer client packages whose files return HTTP 404, so the image installs the main-archive versions. That client is older than the Debian 13 client used with PHP 8.4.
 
-MySQL 8.4 (`sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69`, server 8.4.13) accepts `MYSQL_*` variables and `mysqladmin ping`. A WordPress database dump was not imported into it. MariaDB and MySQL are not interchangeable by changing only the tag. macOS and Windows were not run. The actual GitHub **Code → Download ZIP** archive was not downloaded, because this repository has no GitHub remote.
+MySQL 8.4.13 (`sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb55392d6b69`) installed WordPress and restored that logical snapshot into a second MySQL 8.4 volume. A MariaDB dump was not imported into MySQL. macOS and Windows were not run. The GitHub **Code → Download ZIP** archive was not downloaded, because this repository has no GitHub remote.
 
 `pdo_mysql` is not installed. Rebuild with `INSTALL_PDO_MYSQL=1` in `.env` when a project needs it.
 
@@ -105,7 +105,7 @@ Change one dimension on the candidate:
 | Dimension | Command | Leave unchanged |
 | --- | --- | --- |
 | PHP | Set `PHP_BASE_IMAGE` in the candidate `.env`, set a distinct `PHP_IMAGE`, then `docker compose build && docker compose up -d` | Core files |
-| WordPress | `docker compose exec php wp core update --version=6.8.3` or `--version=latest`, then `wp core update-db` when WordPress asks. Record the version `wp core version` prints afterwards. On 24 October 2026, `--version=latest` from 6.8.3 reported "up to date" and stayed on 6.8.3, while the PHP 8.4 image still contained core 7.1.3 | Plugins, PHP image, database volume |
+| WordPress | `docker compose exec php wp core check-update`, then `docker compose exec php wp core update` for the offer WP-CLI selects, or `wp core update --version=7.1.3` for one exact release. Then `wp core update-db` when WordPress asks. Record `wp core version`. `wp core update --version=latest` is not a version number and leaves the site unchanged | Plugins, PHP image, database volume |
 | Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh` the logical snapshot. Do not copy `/var/lib/mysql` | Files |
 | Plugin | `docker compose exec php wp plugin update <slug>` | Other plugins |
 
