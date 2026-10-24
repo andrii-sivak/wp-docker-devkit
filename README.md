@@ -86,7 +86,7 @@ bin/wp-devkit-copy.sh \
   --new-url "http://127.0.0.1:8082"
 ```
 
-The copy skips directories that already contain `.wp-devkit-instance`, and it refuses a symlink that points outside the source. It keeps WordPress files owned by uid 33 and sets mode 1777 on the copy's top directory so the host can add the marker and `.env`. Each copy receives its own `.env`, project name, HTTP port, and PHP image tag.
+The copy skips directories that already contain `.wp-devkit-instance`, and it refuses a symlink that points outside the source. Each copied file keeps the uid, gid, and mode it had in the source, including mixed ownership. The original tree is not chowned. Only the copy's top directory is set to mode 1777 so the host can add the marker and `.env`. PHP-FPM and WP-CLI run as uid 33 (`www-data`). Core and plugin updates on a copy succeed when those files are writable by uid 33; otherwise adjust the copy, not the original. Each copy receives its own `.env`, project name, HTTP port, and PHP image tag.
 
 Check the copy, then start it and import the same snapshot into its own database:
 
@@ -94,7 +94,7 @@ Check the copy, then start it and import the same snapshot into its own database
 bin/wp-devkit-check-db.sh "$WP_DEVKIT_WORKDIR/instances/baseline"
 docker compose --project-directory "$WP_DEVKIT_WORKDIR/instances/baseline" build
 docker compose --project-directory "$WP_DEVKIT_WORKDIR/instances/baseline" up -d
-bin/wp-devkit-restore.sh "$WP_DEVKIT_WORKDIR/snapshots/initial.sql"
+bin/wp-devkit-restore.sh --target "$WP_DEVKIT_WORKDIR/instances/baseline" "$WP_DEVKIT_WORKDIR/snapshots/initial.sql"
 bin/wp-devkit-adapt-urls.sh
 ```
 
@@ -106,7 +106,7 @@ Change one dimension on the candidate:
 | --- | --- | --- |
 | PHP | Set `PHP_BASE_IMAGE` in the candidate `.env`, set a distinct `PHP_IMAGE`, then `docker compose build && docker compose up -d` | Core files |
 | WordPress | `docker compose exec php wp core check-update`, then `docker compose exec php wp core update` for the offer WP-CLI selects, or `wp core update --version=7.1.3` for one exact release. Then `wp core update-db` when WordPress asks. Record `wp core version`. `wp core update --version=latest` is not a version number and leaves the site unchanged | Plugins, PHP image, database volume |
-| Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh` the logical snapshot. Do not copy `/var/lib/mysql` | Files |
+| Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh --target INSTANCE SNAPSHOT.sql`. Do not copy `/var/lib/mysql` | Files |
 | Plugin | `docker compose exec php wp plugin update <slug>` | Other plugins |
 
 Record actual versions with `bin/wp-devkit-versions.sh`. `latest` must be written down as the version number WP-CLI prints afterward.
@@ -132,13 +132,19 @@ Plain `docker compose up -d` does not start either service.
 
 ## Cleanup
 
-This removes the instance directory, its containers, its network, and its named database volume:
+This removes one instance directory, its containers, its network, and its named database volume:
 
 ```bash
 bin/wp-devkit-cleanup.sh "$WP_DEVKIT_WORKDIR/instances/candidate"
 ```
 
-It refuses a path that is not inside the work directory or that lacks `.wp-devkit-instance`. It does not run `docker system prune` and it does not delete other projects.
+Restore and cleanup require a directory created by `bin/wp-devkit-copy.sh`. They refuse the original project, a path outside the work directory, and an instance whose marker, `.wp-devkit-meta`, and `COMPOSE_PROJECT_NAME` disagree. With `WP_DEVKIT_WORKDIR` unset, the work directory is the sibling `wp-devkit-work` of the source recorded in the instance metadata. Neither command runs `docker system prune` or deletes other projects.
+
+`bin/wp-devkit-restore.sh` does not import into the tree that contains the script. Pass the instance explicitly:
+
+```bash
+bin/wp-devkit-restore.sh --target "$WP_DEVKIT_WORKDIR/instances/candidate" "$WP_DEVKIT_WORKDIR/snapshots/initial.sql"
+```
 
 ## Integration warning
 

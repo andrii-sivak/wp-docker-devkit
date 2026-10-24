@@ -4,7 +4,7 @@
 set -Eeuo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${WP_DEVKIT_FOLLOWUP:-/run/media/user/dev_ssd/tmp/wp-devkit-followup}
+WORK=${WP_DEVKIT_FOLLOWUP:-${TMPDIR:-/tmp}/wp-devkit-followup}
 export WP_DEVKIT_WORKDIR="$WORK"
 LOG="$WORK/log"
 mkdir -p "$LOG"
@@ -169,7 +169,7 @@ assert "switched runtime is 7.4" test "$php_sw" = "7.4.33"
 hash_core "$SW" >"$LOG/hash-after.txt"
 assert "core hashes unchanged after php switch" cmp -s "$LOG/hash-before.txt" "$LOG/hash-after.txt"
 ( cd "$SRC" && bin/wp-devkit-snapshot.sh switch ) >"$LOG/snap-switch.txt" 2>&1
-( cd "$SW" && bin/wp-devkit-restore.sh "$WORK/snapshots/switch.sql" ) >"$LOG/restore-switch.txt" 2>&1
+( cd "$SW" && bin/wp-devkit-restore.sh --target "$SW" "$WORK/snapshots/switch.sql" ) >"$LOG/restore-switch.txt" 2>&1
 ( cd "$SW" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-switch.txt" 2>&1
 sw_home=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18112/ || echo 000)
 assert "switched site still responds" test "$sw_home" = "200"
@@ -237,7 +237,7 @@ DIRS+=("$MY2")
 # Keep the second copy on MySQL. The copy script preserves DB_IMAGE from .env.
 docker compose --project-directory "$MY2" up -d >"$LOG/up-mysql2.txt" 2>&1
 assert "mysql copy healthy" wait_healthy "$MY2"
-( cd "$MY2" && bin/wp-devkit-restore.sh "$WORK/snapshots/mysql.sql" ) >"$LOG/restore-mysql.txt" 2>&1
+( cd "$MY2" && bin/wp-devkit-restore.sh --target "$MY2" "$WORK/snapshots/mysql.sql" ) >"$LOG/restore-mysql.txt" 2>&1
 ( cd "$MY2" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-mysql.txt" 2>&1
 desc=$(docker compose --project-directory "$MY2" exec -T php wp option get blogdescription | tr -d '[:space:]')
 assert "mysql restore kept blogdescription" test "$desc" = "mysql-marker"

@@ -7,13 +7,13 @@ This document provides instructions to the receiving agent; requirements, accept
 
 ## First Task: Review and Validate Assumptions
 
-Read `SPEC.md` in full. First review the contract for consistency and produce a concise map of unverified assumptions OQ-01–OQ-10 and their implementation implications. Do not start by writing Compose files or repeat discovery for settled decisions.
+Read `SPEC.md` in full. Do not repeat discovery for settled decisions. Image checks belong in an isolated environment. Do not treat a registry manifest or a single PHAR startup as runtime qualification.
 
-The current user task authorizes specification preparation and revision only. During independent review, provide findings and document refinements without implementation. Once a separate implementation task is given, the first technical action is to validate current images and their dependent assumptions in an isolated test environment before building the main solution.
+Implementation of the approved specification is authorized. Qualification evidence lives in `docs/validation/qualification.md`. Do not claim a combination that file leaves unverified, including a MariaDB dump imported into MySQL and the GitHub Download ZIP when no GitHub remote exists.
 
 Prioritize validation of the selected Debian WordPress FPM image/digest and entrypoint; prevention of incomplete Brownfield overwrites; CLI tools, extensions, and SQL clients; compatible PHP 7.4 options; readiness; and write permissions. Do not cite a network timeout as evidence of incompatibility. Do not claim runtime support based on a registry manifest or a single PHAR startup.
 
-PHP 7.4 remains the agreed minimum target version, but runtime compatibility is unverified. Validate its runtime, tooling, and required extensions before claiming support. If qualification fails or remains blocked, document the unresolved requirement and request an explicit decision before claiming the relevant acceptance criteria, including their PHP 7.4 portions in AC-04 and AC-08, are satisfied. Do not silently raise the minimum. Development and testing of the PHP 8.4 baseline may proceed independently; success there does not qualify PHP 7.4.
+PHP 7.4 remains the agreed minimum target version. Do not silently raise the minimum. Record runtime, tooling, and extensions in `docs/validation/qualification.md` before calling a combination supported. A PHP 8.4 result does not by itself qualify PHP 7.4.
 
 MariaDB is the initial database engine for the first prototype and pilot. MySQL remains within the agreed configurable database-engine requirements; do not silently remove or defer it. Each environment runs one selected engine, not both simultaneously. Do not promise arbitrary MariaDB/MySQL version compatibility or universal migrations. Describe only verified engine/version combinations as tested or supported.
 

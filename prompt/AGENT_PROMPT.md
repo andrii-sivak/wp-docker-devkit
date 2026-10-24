@@ -10,7 +10,7 @@ Use the same commands a person uses. Do not install Git, GNU Make, or a project-
 6. Do not let a normal startup or a PHP image change replace WordPress core. Updating core is only `wp core update` (and `wp core update-db` when needed), run on the candidate.
 7. Run `bin/wp-devkit-smoke.sh` and any project check that is actually configured. Missing project tests are NOT CONFIGURED, never PASS.
 8. Write a Markdown report with the goal, the one comparison dimension, baseline and candidate parameters, the snapshot path, actual versions, commands and exit codes, the five statuses (PASS, FAIL, SKIPPED, NOT CONFIGURED, ERROR), differences, limitations, and whether cleanup has been done.
-9. Clean up with `bin/wp-devkit-cleanup.sh` on the selected instance only. Do not run `docker system prune` or delete unrelated containers, volumes, or images.
+9. Restore a snapshot only with `bin/wp-devkit-restore.sh --target INSTANCE SNAPSHOT.sql`. Clean up with `bin/wp-devkit-cleanup.sh` on that same instance. Do not run either command against the original project. Do not run `docker system prune` or delete unrelated containers, volumes, or images.
 10. Docker does not block outbound mail, webhooks, or payments. Do not claim that it does. Do not add a mandatory MU-plugin, egress firewall, `WP_HTTP_BLOCK_EXTERNAL`, or a forced cron change.
 
 PHP 7.4 is an unverified minimum target until a runtime qualification says otherwise. A PHP 8.4 result does not qualify PHP 7.4. Only database engine/version pairs that this run actually imported may be called tested.

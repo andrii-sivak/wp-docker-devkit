@@ -5,7 +5,7 @@
 set -Eeuo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${WP_DEVKIT_WORKDIR:-/run/media/user/dev_ssd/tmp/wp-devkit-mvp}
+WORK=${WP_DEVKIT_WORKDIR:-${TMPDIR:-/tmp}/wp-devkit-mvp}
 export WP_DEVKIT_WORKDIR="$WORK"
 LOG="$WORK/log"
 mkdir -p "$LOG"
@@ -236,8 +236,8 @@ docker compose --project-directory "$BASE" up -d --build >"$LOG/up-base.txt" 2>&
 docker compose --project-directory "$CAND" up -d --build >"$LOG/up-cand.txt" 2>&1
 assert "baseline healthy" wait_healthy "$BASE"
 assert "candidate healthy" wait_healthy "$CAND"
-( cd "$BASE" && bin/wp-devkit-restore.sh "$WORK/snapshots/initial.sql" ) >"$LOG/restore-base.txt" 2>&1
-( cd "$CAND" && bin/wp-devkit-restore.sh "$WORK/snapshots/initial.sql" ) >"$LOG/restore-cand.txt" 2>&1
+( cd "$BASE" && bin/wp-devkit-restore.sh --target "$BASE" "$WORK/snapshots/initial.sql" ) >"$LOG/restore-base.txt" 2>&1
+( cd "$CAND" && bin/wp-devkit-restore.sh --target "$CAND" "$WORK/snapshots/initial.sql" ) >"$LOG/restore-cand.txt" 2>&1
 ( cd "$BASE" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-base.txt" 2>&1
 ( cd "$CAND" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-cand.txt" 2>&1
 base_home=$(docker compose --project-directory "$BASE" exec -T php wp option get home | tr -d '[:space:]')
@@ -279,7 +279,7 @@ say "core dimension on a third copy"
 ( cd "$SRC" && bin/wp-devkit-copy.sh --source "$SRC" --dest "$CORE" --project wpdevkitcore --port 18084 --old-url "http://127.0.0.1:18081" --new-url "http://127.0.0.1:18084" ) >"$LOG/copy-core.txt" 2>&1
 docker compose --project-directory "$CORE" up -d --build >"$LOG/up-core.txt" 2>&1
 assert "core candidate healthy" wait_healthy "$CORE"
-( cd "$CORE" && bin/wp-devkit-restore.sh "$WORK/snapshots/initial.sql" ) >"$LOG/restore-core.txt" 2>&1
+( cd "$CORE" && bin/wp-devkit-restore.sh --target "$CORE" "$WORK/snapshots/initial.sql" ) >"$LOG/restore-core.txt" 2>&1
 ( cd "$CORE" && bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-core.txt" 2>&1
 core_before=$(docker compose --project-directory "$CORE" exec -T php wp core version | tr -d '[:space:]')
 docker compose --project-directory "$CORE" exec -T php wp core download --version=6.8.3 --force >"$LOG/core-download.txt" 2>&1

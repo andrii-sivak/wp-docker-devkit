@@ -59,15 +59,16 @@ while IFS= read -r marker; do
 done < <(find "$source_dir" -name .wp-devkit-instance -print)
 
 mkdir -p "$dest"
-# Host tar records uid 33. Extracting as root applies it; a non-root extract
-# would reown the tree and PHP could not update plugins or core.
+# Preserve each source uid/gid, including mixed ownership. The original tree
+# is only read. Extracting as root is what lets those numeric ids stick;
+# a non-root extract would reown every file as the invoking user.
 tar -C "$source_dir" "${excludes[@]}" -cf - . \
   | docker compose --project-directory "$source_dir" run --rm --no-deps -T \
       --entrypoint tar \
       -v "$dest:/dest" \
       php -C /dest --numeric-owner -xf -
-# The copied root is uid 33. Let the host create the marker and .env in that
-# directory only; file ownership inside the tree stays with www-data.
+# Mode 1777 applies only to the copy's top directory so the host can add the
+# marker and .env. File modes and owners inside the tree are left as copied.
 docker compose --project-directory "$source_dir" run --rm --no-deps -T \
   --entrypoint chmod \
   -v "$dest:/dest" \

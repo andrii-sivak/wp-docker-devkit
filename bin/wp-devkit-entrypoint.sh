@@ -10,10 +10,13 @@ required=(
   index.php
   wp-includes/version.php
   wp-includes/functions.php
+  wp-includes/load.php
+  wp-includes/plugin.php
   wp-settings.php
   wp-load.php
   wp-login.php
   wp-admin/admin.php
+  wp-admin/includes/admin.php
 )
 
 # Top-level names that ship with this template or are created by its scripts.
@@ -42,6 +45,20 @@ done < <(find . -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
 
 if [[ "$all_required" -eq 1 ]]; then
   state=complete
+  # A handful of sentinel files is not a WordPress tree. Real cores ship
+  # hundreds of files under wp-includes and wp-admin.
+  if ! grep -q '\$wp_version' wp-includes/version.php; then
+    state=incomplete
+    missing+=("wp-includes/version.php (no \$wp_version)")
+  fi
+  includes_n=$(find wp-includes -type f | wc -l)
+  admin_n=$(find wp-admin -type f | wc -l)
+  includes_n=${includes_n// /}
+  admin_n=${admin_n// /}
+  if [[ "$includes_n" -lt 40 || "$admin_n" -lt 15 || ! -d wp-content ]]; then
+    state=incomplete
+    missing+=("wp-includes files=${includes_n} (need >= 40), wp-admin files=${admin_n} (need >= 15), wp-content directory")
+  fi
 elif [[ "$any_required" -eq 1 || ${#unexpected[@]} -gt 0 ]]; then
   state=incomplete
 else
