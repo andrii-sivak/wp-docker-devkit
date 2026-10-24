@@ -28,7 +28,7 @@ MySQL 8.4.13 (`sha256:76f0358884cb92d9a086d24e5671c38048d3fef40f2588703d73eb5539
 
 1. On GitHub, use **Code → Download ZIP**. Extract the archive, find the single `wp-devkit/` directory inside GitHub's wrapper directory, and place that directory inside the WordPress root. Do not replace an existing `wp-devkit/` without reviewing it. Leave the site's own Compose file, Dockerfile, `.env`, README, and scripts where they are.
 2. A root whose only top-level entry is `wp-devkit/` is a new site. An existing site must already be a complete tree (`index.php`, `wp-includes/version.php` with `$wp_version`, `wp-settings.php`, `wp-load.php`, `wp-login.php`, `wp-admin/admin.php`, `wp-includes/functions.php`, `wp-includes/load.php`, `wp-includes/plugin.php`, `wp-admin/includes/admin.php`, a `wp-content/` directory, and the rest of a real core). A handful of those files is not enough.
-3. `cp .env.example .env` inside `wp-devkit/` and edit ports, resource limits, and `WP_HOME` / `WP_SITEURL`.
+3. `cp .env.example .env` inside `wp-devkit/` and edit ports, resource limits, and `WP_HOME` / `WP_SITEURL`. `.env.example` is a DevKit example. It is not the version or credential source for an existing site. Constants already set in `wp-config.php` stay in force; `WP_HOME` and `WP_SITEURL` in `.env` do not replace them or the `home` and `siteurl` values stored in the database. DevKit does not edit the original `wp-config.php` or the source database.
 4. Set `COMPOSE_PROJECT_NAME` to a name that is unique on this machine, for example the site directory name (`project-x`). Do not use `wp-devkit`. Set a distinct `PHP_IMAGE` when more than one copy will run.
 5. From `wp-devkit/`, check the project name, then build and start:
 
@@ -72,9 +72,18 @@ Published HTTP ports bind to `127.0.0.1`. The database port is not published. Ng
 
 ## Comparisons
 
-For a source directory `project-x/`, the default copies are the siblings `project-x-baseline/` and `project-x-candidate/`. Each contains its own `wp-devkit/`, Compose project, network, and database volume. The snapshot is `project-x-snapshots/<name>.sql`, next to those directories and outside all three WordPress roots.
+`<site>` below is the name of the WordPress root directory, not a wider project name. For a root named `project-x`, the siblings are:
 
-Do not edit the source files or the source database while you take the snapshot and restore it into both copies. The toolkit does not lock or watch the source. A later edit of the source is not copied into the siblings.
+- `project-x/` — the original site
+- `project-x-baseline/` — the baseline copy
+- `project-x-candidate/` — the candidate copy
+- `project-x-snapshots/` — SQL snapshots and any report you choose to write there
+
+There is one baseline and one candidate. Each has its own `wp-devkit/`, Compose project, network, and database volume. `bin/wp-devkit-snapshot.sh initial` writes `project-x-snapshots/initial.sql`, outside all three WordPress roots.
+
+That export needs the source database running and reachable. If it is not, the export stops. Start or repair that database yourself, then run the snapshot command again. DevKit does not start, repair, or reconfigure the original database. If you already have a suitable `.sql` dump, put it in `project-x-snapshots/` and skip another export. `bin/wp-devkit-snapshot.sh` uses WP-CLI inside the DevKit PHP container. On a source that is not running under DevKit, an existing client such as `mariadb-dump` is enough. Do not copy raw database files, and do not install tools only to obtain WP-CLI.
+
+Do not edit the source files or the source database while you take the snapshot and restore it into both copies. The toolkit does not lock or watch the source. A later edit of the source is not copied into the siblings. A copy keeps the database name, user, and password it found in `wp-config.php` when those values are hardcoded. Before the first start or restore, `bin/wp-devkit-check-db.sh` must show that `DB_HOST` is this copy's `db` service. If the check prints another host, change only that copy's `wp-config.php`, never the original. `.env` does not override a hardcoded `DB_HOST`.
 
 From the source `wp-devkit/` directory:
 
@@ -123,7 +132,7 @@ bin/wp-devkit-restore.sh --target ../../project-x-baseline ../../project-x-snaps
 
 Run the adapt command from the copy, as shown. It reads `.wp-devkit-meta` as data, uses `wp search-replace` (which updates serialized values), then sets the `home` and `siteurl` options. Constants already saved in `wp-config.php` are not rewritten. Repeat restore and adapt for `../../project-x-candidate`.
 
-Change one dimension on the candidate:
+Confirm the baseline answers before you change the candidate. If the baseline fails, stop. Do not treat that failure as a candidate result. Prefer one change on the candidate. You can put several changes in that same candidate when you want one combined test. Do not create a second candidate for the combination.
 
 | Dimension | Command | Leave unchanged |
 | --- | --- | --- |
@@ -140,9 +149,9 @@ Record actual versions with `bin/wp-devkit-versions.sh`. `latest` must be writte
 bin/wp-devkit-smoke.sh --output ../../project-x-snapshots/smoke.md
 ```
 
-`PROJECT_CHECK_COMMAND`, when set, is run on the host. If it is unset, the report says NOT CONFIGURED. Statuses are PASS, FAIL, SKIPPED, NOT CONFIGURED, and ERROR. A skipped integration check is not a success. Smoke checks do not prove that payment, mail, or other integrations work.
+`PROJECT_CHECK_COMMAND`, when set, is run on the host. If it is unset, the report says NOT CONFIGURED. Statuses are PASS, FAIL, SKIPPED, NOT CONFIGURED, and ERROR. A skipped integration check is not a success. Smoke checks do not prove that payment, mail, or other integrations work. The command above is the smoke report. It is written only where `--output` points. With no `--output`, it is printed and not saved. `examples/comparison-report.md` shows a report shape. It is not generated for you. Keep or discard these files as you like. Nothing in this toolkit commits them.
 
-`START_HERE.md` points at `skills/wp-devkit/SKILL.md`. `prompt/AGENT_PROMPT.md` is the same workflow in one page. `examples/comparison-report.md` shows the report shape. None of these is required to operate the toolkit.
+`START_HERE.md` points at `skills/wp-devkit/SKILL.md` for an assistant. That skill is optional. This README is the manual. The skill's status check does not start containers. Discovery there does not change the site until you run the commands in this file.
 
 ## Optional tools
 
@@ -155,13 +164,16 @@ Plain `docker compose up -d` does not start either service.
 
 ## Cleanup
 
-This removes one copied WordPress root, its containers, its network, and its named database volume. It checks that every Compose resource for that project name has this copy's `wp-devkit/` as its working directory. A name that belongs to another directory is refused, and nothing is deleted.
+You can remove a copy at any time, whether or not the checks passed. From `project-x/wp-devkit/`:
 
 ```bash
+bin/wp-devkit-cleanup.sh ../../project-x-baseline
 bin/wp-devkit-cleanup.sh ../../project-x-candidate
 ```
 
-Restore and cleanup require a directory created by `bin/wp-devkit-copy.sh`. They refuse the original project and a copy whose marker, `.wp-devkit-meta`, and `COMPOSE_PROJECT_NAME` disagree. Neither command runs `docker system prune` or deletes other projects.
+Each command removes that copied WordPress root, its containers, its network, and its named database volume. It checks that every container for that Compose project name has this copy's `wp-devkit/` as its working directory. A name that belongs to another directory is refused, and nothing is deleted. The original site and its database stay. `project-x-snapshots/` and every file in it stay, including SQL dumps and reports. Deleting a snapshot file is a separate step you do yourself. Cleanup does not remove Docker images or the build cache, and it does not run `docker system prune`. There is no command that deletes every copy and the snapshots together.
+
+Restore and cleanup require a directory created by `bin/wp-devkit-copy.sh`. They refuse the original project and a copy whose marker, `.wp-devkit-meta`, and `COMPOSE_PROJECT_NAME` disagree.
 
 `bin/wp-devkit-restore.sh` does not import into the tree that contains the script. Pass the copy explicitly:
 
