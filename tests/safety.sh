@@ -4,8 +4,20 @@
 set -Eeuo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-ROOT=${TMPDIR:-/tmp}/wp-devkit-safety-$$
-mkdir -p "$ROOT"
+ROOT=$(mktemp -d "${TMPDIR:-/tmp}/wp-devkit-safety.XXXXXX")
+TAG=$(basename "$ROOT" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9')
+TAG=${TAG: -10}
+NGINX_CNAME="wpdsngx${TAG}"
+FOREIGN_CNAME="wpdsfor${TAG}"
+CTX_IMAGE="wpdsctx${TAG}"
+DB_CNAME="wpdsdb${TAG}"
+P_ONE="wpone${TAG}"
+P_FOREIGN="wpfor${TAG}"
+P_OWN="wpown${TAG}"
+P_OWN2="wpn2${TAG}"
+P_OWN3="wpn3${TAG}"
+P_CLASH="wpcl${TAG}"
+P_ADAPT="wpad${TAG}"
 PASS=0
 FAIL=0
 SKIP=0
@@ -20,14 +32,17 @@ assert() {
 }
 
 cleanup() {
-  docker rm -f wpdevkit-safety-nginx >/dev/null 2>&1 || true
-  docker rmi wpdevkit-context-check >/dev/null 2>&1 || true
+  docker rm -f "$NGINX_CNAME" >/dev/null 2>&1 || true
+  docker rm -f -v "$DB_CNAME" >/dev/null 2>&1 || true
+  docker rmi "$CTX_IMAGE" >/dev/null 2>&1 || true
   if [[ -d "$ROOT/own-src/wp-devkit" ]]; then
-    docker compose --project-directory "$ROOT/own-src/wp-devkit" down --remove-orphans >/dev/null 2>&1 || true
+    docker compose --project-directory "$ROOT/own-src/wp-devkit" --project-name "$P_OWN" down --remove-orphans >/dev/null 2>&1 || true
   fi
-  docker rm -f wpdevkit-safety-foreign >/dev/null 2>&1 || true
-  docker run --rm -v "$ROOT:/work" alpine:3.20 rm -rf /work >/dev/null 2>&1 || true
-  rm -rf "$ROOT"
+  docker rm -f "$FOREIGN_CNAME" >/dev/null 2>&1 || true
+  if [[ -d "$ROOT" ]]; then
+    docker run --rm -v "$ROOT:/work" alpine:3.20 rm -rf /work >/dev/null 2>&1 || true
+    rm -rf "$ROOT"
+  fi
 }
 trap cleanup EXIT
 
@@ -93,7 +108,7 @@ SITE="$ROOT/site"
 mkdir -p "$SITE"
 printf 'original-db-row\n' > "$SITE/db-canary"
 INST="$ROOT/site-baseline"
-write_instance "$INST" "wpdevkitone" "$SITE"
+write_instance "$INST" "$P_ONE" "$SITE"
 UNRELATED="$ROOT/unrelated-project"
 mkdir -p "$UNRELATED"
 printf 'keep-me\n' > "$UNRELATED/data"
@@ -103,9 +118,9 @@ assert "original canary survives cleanup" grep -qx 'original-db-row' "$SITE/db-c
 assert "unrelated directory survives cleanup" grep -qx 'keep-me' "$UNRELATED/data"
 
 FOREIGN="$ROOT/site-candidate"
-write_instance "$FOREIGN" "wpdevkitforeign" "$SITE"
-docker run -d --name wpdevkit-safety-foreign \
-  --label com.docker.compose.project=wpdevkitforeign \
+write_instance "$FOREIGN" "$P_FOREIGN" "$SITE"
+docker run -d --name "$FOREIGN_CNAME" \
+  --label "com.docker.compose.project=${P_FOREIGN}" \
   --label com.docker.compose.project.working_dir=/tmp/not-this-kit \
   alpine:3.20 sleep 120 >/dev/null
 set +e
@@ -118,7 +133,7 @@ assert "cleanup with a foreign compose owner exits non-zero" test "$code_foreign
 assert "foreign-owned copy was not deleted" test -f "$FOREIGN/db-canary"
 assert "cleanup of the original exits non-zero" test "$code_site" -ne 0
 assert "original canary survives refused cleanup" grep -qx 'original-db-row' "$SITE/db-canary"
-docker rm -f wpdevkit-safety-foreign >/dev/null
+docker rm -f "$FOREIGN_CNAME" >/dev/null
 "$REPO/wp-devkit/bin/wp-devkit-cleanup.sh" "$FOREIGN" >"$ROOT/cleanup-foreign-after.txt" 2>&1
 assert "cleanup succeeds after the foreign resource is gone" test ! -d "$FOREIGN"
 
@@ -181,7 +196,7 @@ else
   mkdir -p "$OWN_SRC/wp-devkit" "$OWN_SRC/old-baseline"
   tar -C "$REPO/wp-devkit" -cf - . | tar -C "$OWN_SRC/wp-devkit" -xf -
   chmod +x "$OWN_SRC"/wp-devkit/bin/*.sh
-  printf 'COMPOSE_PROJECT_NAME=wpdevkitown\nPHP_IMAGE=wp-devkit-php:8.4\n' > "$OWN_SRC/wp-devkit/.env"
+  printf 'COMPOSE_PROJECT_NAME=%s\nPHP_IMAGE=wp-devkit-php:8.4\n' "$P_OWN" > "$OWN_SRC/wp-devkit/.env"
   printf 'user-owned\n' > "$OWN_SRC/owned-by-user.txt"
   printf 'other-owned\n' > "$OWN_SRC/owned-by-33.txt"
   printf 'do-not-copy\n' > "$OWN_SRC/old-baseline/secret.txt"
@@ -189,7 +204,7 @@ else
   src_user=$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-user.txt")
   src_other=$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-33.txt")
   OWN_DEST="$ROOT/own-src-baseline"
-  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project wpdevkitown2 --port 18099 \
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project "$P_OWN2" --port 18099 \
     --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18099" >"$ROOT/copy-own.txt" 2>&1
   assert "source user-owned file unchanged" test "$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-user.txt")" = "$src_user"
   assert "source uid 33 file unchanged" test "$(stat -c '%u:%g:%a' "$OWN_SRC/owned-by-33.txt")" = "$src_other"
@@ -198,21 +213,21 @@ else
   assert "copy root is not mode 1777" test "$(stat -c '%a' "$OWN_DEST")" != "1777"
   assert "prior baseline directory was not copied" test ! -e "$OWN_DEST/old-baseline/secret.txt"
   set +e
-  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project wpdevkitown3 --port 18097 \
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --role baseline --project "$P_OWN3" --port 18097 \
     --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18097" >"$ROOT/copy-exists.txt" 2>&1
   code_exists=$?
   set -e
   assert "existing destination is refused" test "$code_exists" -ne 0
-  docker run -d --name wpdevkit-safety-foreign \
-    --label com.docker.compose.project=wpdevkitclash \
+  docker run -d --name "$FOREIGN_CNAME" \
+    --label "com.docker.compose.project=${P_CLASH}" \
     --label com.docker.compose.project.working_dir=/tmp/other-kit \
     alpine:3.20 sleep 120 >/dev/null
   set +e
-  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --dest "$ROOT/own-src-candidate" --project wpdevkitclash --port 18096 \
+  "$OWN_SRC/wp-devkit/bin/wp-devkit-copy.sh" --source "$OWN_SRC" --dest "$ROOT/own-src-candidate" --project "$P_CLASH" --port 18096 \
     --old-url "http://127.0.0.1:18098" --new-url "http://127.0.0.1:18096" >"$ROOT/copy-clash.txt" 2>&1
   code_clash=$?
   set -e
-  docker rm -f wpdevkit-safety-foreign >/dev/null
+  docker rm -f "$FOREIGN_CNAME" >/dev/null
   assert "duplicate compose project name is refused" test "$code_clash" -ne 0
   assert "clashing destination was not created" test ! -e "$ROOT/own-src-candidate"
 fi
@@ -239,15 +254,16 @@ else
   printf '<?php\n' > "$WEB/.well-known/wp-config.php"
   printf 'home\n' > "$WEB/index.html"
   printf 'readme\n' > "$WEB/wp-devkit/README.md"
-  docker rm -f wpdevkit-safety-nginx >/dev/null 2>&1 || true
-  docker run -d --name wpdevkit-safety-nginx \
+  NGINX_PORT=$(python3 -c 'import socket; s=socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()')
+  docker rm -f "$NGINX_CNAME" >/dev/null 2>&1 || true
+  docker run -d --name "$NGINX_CNAME" \
     --add-host php:127.0.0.1 \
-    -p 127.0.0.1:18991:80 \
+    -p "127.0.0.1:${NGINX_PORT}:80" \
     -v "$REPO/wp-devkit/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro" \
     -v "$WEB:/var/www/html:ro" \
     "$NGINX_IMAGE" >/dev/null
   sleep 1
-  code_of() { curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:18991$1" || echo 000; }
+  code_of() { curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${NGINX_PORT}$1" || echo 000; }
   assert "dotenv denied" test "$(code_of /.env)" = "403"
   assert "git denied" test "$(code_of /.git/HEAD)" = "403"
   assert "wp-config denied" test "$(code_of /wp-config.php)" = "403"
@@ -262,7 +278,7 @@ else
   assert "well-known wp-config denied" test "$(code_of /.well-known/wp-config.php)" = "403"
   assert "wp-devkit denied" test "$(code_of /wp-devkit/README.md)" = "403"
   assert "homepage static served" test "$(code_of /index.html)" = "200"
-  docker rm -f wpdevkit-safety-nginx >/dev/null
+  docker rm -f "$NGINX_CNAME" >/dev/null
 fi
 
 say "docker build context excludes site files"
@@ -276,7 +292,7 @@ cat > "$CTX/Dockerfile" <<'EOF'
 FROM alpine:3.20
 COPY php/devkit.ini /tmp/devkit.ini
 EOF
-docker build -t wpdevkit-context-check "$CTX" >"$ROOT/context-build.txt" 2>&1
+docker build -t "$CTX_IMAGE" "$CTX" >"$ROOT/context-build.txt" 2>&1
 size=$(python3 - "$ROOT/context-build.txt" <<'PY'
 import re, sys
 text=open(sys.argv[1], encoding="utf-8", errors="replace").read()
@@ -294,25 +310,25 @@ print(int(value))
 PY
 )
 assert "build context stays small" test "$size" -gt 0 -a "$size" -lt 200000
-docker rmi wpdevkit-context-check >/dev/null
+docker rmi "$CTX_IMAGE" >/dev/null
 
 say "url adaptation does not execute metadata"
 ADAPT="$ROOT/adapt-copy"
 mkdir -p "$ADAPT/wp-devkit/bin"
 cp "$REPO/wp-devkit/bin/wp-devkit-adapt-urls.sh" "$REPO/wp-devkit/bin/wp-devkit-lib.sh" "$ADAPT/wp-devkit/bin/"
 chmod +x "$ADAPT"/wp-devkit/bin/*.sh
-printf 'adaptproj\n' > "$ADAPT/wp-devkit/.wp-devkit-instance"
-python3 - "$ADAPT/wp-devkit/.wp-devkit-meta" "$ROOT/pwned" <<'PY'
+printf '%s\n' "$P_ADAPT" > "$ADAPT/wp-devkit/.wp-devkit-instance"
+python3 - "$ADAPT/wp-devkit/.wp-devkit-meta" "$ROOT/pwned" "$P_ADAPT" <<'PY'
 import sys
-path, pwned = sys.argv[1:]
+path, pwned, project = sys.argv[1:]
 open(path, "w", encoding="utf-8").write(
-    "project=adaptproj\n"
+    f"project={project}\n"
     f"old_url=http://old.example/$(touch {pwned})\n"
     "new_url=http://new.example/\n"
-    "source=/tmp/not-the-adapt-copy\n"
+    f"source=/tmp/not-the-adapt-copy\n"
 )
 PY
-printf 'COMPOSE_PROJECT_NAME=adaptproj\n' > "$ADAPT/wp-devkit/.env"
+printf 'COMPOSE_PROJECT_NAME=%s\n' "$P_ADAPT" > "$ADAPT/wp-devkit/.env"
 : > "$ROOT/adapt-docker.log"
 cat > "$SHIM/docker" <<EOF
 #!/bin/sh
@@ -326,6 +342,93 @@ set -e
 assert "metadata url adaptation exits non-zero without a stack" test "$code_adapt" -ne 0
 assert "metadata was not executed" test ! -e "$ROOT/pwned"
 grep -q 'touch' "$ROOT/adapt-docker.log" && ok "metadata reached docker as text" || bad "metadata reached docker as text"
+
+say "sandbox directive keeps legitimate SQL"
+# shellcheck disable=SC1091
+source "$REPO/wp-devkit/bin/wp-devkit-lib.sh"
+cat > "$ROOT/sandbox-in.sql" <<'SQL'
+/*M!999999\- enable the sandbox mode */
+  /*M!999999\- enable the sandbox mode */
+CREATE TABLE sandbox_notes (id INT PRIMARY KEY, body TEXT);
+INSERT INTO sandbox_notes (id, body) VALUES (1, 'enable the sandbox mode');
+INSERT INTO sandbox_notes (id, body) VALUES (2, 'enable the sandbox mode'), (3, 'prefix enable the sandbox mode suffix');
+INSERT INTO sandbox_notes (id, body) VALUES
+(4, 'enable the sandbox mode'),
+(5, '/*M!999999\- enable the sandbox mode */');
+SQL
+wp_devkit_strip_sandbox_directive < "$ROOT/sandbox-in.sql" > "$ROOT/sandbox-out.sql"
+directive_left=$(grep -Ec '^[[:space:]]*/\*M!999999\\- enable the sandbox mode \*/[[:space:]]*$' "$ROOT/sandbox-out.sql" || true)
+assert "sandbox directive lines removed" test "$directive_left" -eq 0
+assert "single-row insert kept" grep -qF "VALUES (1, 'enable the sandbox mode')" "$ROOT/sandbox-out.sql"
+assert "extended insert kept" grep -qF "VALUES (2, 'enable the sandbox mode'), (3, 'prefix enable the sandbox mode suffix')" "$ROOT/sandbox-out.sql"
+assert "continued insert kept" grep -qF "(4, 'enable the sandbox mode')" "$ROOT/sandbox-out.sql"
+assert "directive stored as data kept" grep -qF "(5, '/*M!999999\\- enable the sandbox mode */')" "$ROOT/sandbox-out.sql"
+DB_IMAGE='mariadb:11.8@sha256:f16d7a344413e519dff518f27bdb221388f84b0d274c97c4fb5f2cb0dc1b34fa'
+if ! docker image inspect "$DB_IMAGE" >/dev/null 2>&1; then
+  skip "mariadb image is not present for snapshot round trip"
+else
+  docker run -d --name "$DB_CNAME" \
+    -e MARIADB_ROOT_PASSWORD=wordpress-root \
+    -e MARIADB_DATABASE=wordpress \
+    "$DB_IMAGE" >/dev/null
+  ready=0
+  for _ in $(seq 1 40); do
+    if docker exec "$DB_CNAME" mariadb -uroot -pwordpress-root -e 'SELECT 1' wordpress >/dev/null 2>&1; then
+      ready=1
+      break
+    fi
+    sleep 2
+  done
+  assert "sandbox database became ready" test "$ready" -eq 1
+  set +e
+  wp_devkit_strip_sandbox_directive < "$ROOT/sandbox-in.sql" \
+    | docker exec -i "$DB_CNAME" mariadb -uroot -pwordpress-root wordpress >"$ROOT/sandbox-import.txt" 2>&1
+  import_code=$?
+  set -e
+  assert "filtered SQL imports" test "$import_code" -eq 0
+  kept=$(docker exec "$DB_CNAME" mariadb -N -uroot -pwordpress-root wordpress \
+    -e "SELECT COUNT(*) FROM sandbox_notes WHERE body LIKE '%enable the sandbox mode%'" | tr -d '[:space:]')
+  assert "restored rows keep the sandbox phrase" test "$kept" = "5"
+  docker rm -f -v "$DB_CNAME" >/dev/null
+fi
+
+say "readme paths work from wp-devkit"
+DOC="$ROOT/doclayout"
+mkdir -p "$DOC/project-x" "$DOC/project-x-baseline/wp-devkit/bin" "$DOC/project-x-candidate" "$DOC/project-x-snapshots"
+cp -a "$REPO/wp-devkit/." "$DOC/project-x/wp-devkit/"
+cp "$REPO/wp-devkit/compose.yaml" "$DOC/project-x-baseline/wp-devkit/compose.yaml"
+printf 'COMPOSE_PROJECT_NAME=rd%s\n' "$TAG" > "$DOC/project-x-baseline/wp-devkit/.env"
+touch "$DOC/project-x-baseline/wp-devkit/bin/wp-devkit-adapt-urls.sh"
+touch "$DOC/project-x-snapshots/initial.sql" "$DOC/project-x-snapshots/smoke.md"
+if ! python3 - "$REPO/wp-devkit/README.md" "$DOC/project-x/wp-devkit" >"$ROOT/readme-paths.txt" <<'PY'
+import os, re, sys
+readme, cwd = sys.argv[1:]
+text = open(readme, encoding="utf-8").read()
+if re.search(r"(?<!/)\.\./project-x", text):
+    sys.exit("README still has a one-level ../project-x path")
+rels = re.findall(r"(?:\.\./)+project-x[A-Za-z0-9_./-]*|bin/wp-devkit-[a-z-]+\.sh", text)
+missing = []
+for rel in rels:
+    path = os.path.normpath(os.path.join(cwd, rel))
+    if not os.path.exists(path):
+        missing.append(f"{rel} -> {path}")
+if not rels or missing:
+    sys.exit("missing documented paths:\n" + "\n".join(missing))
+print(f"checked {len(rels)} paths")
+PY
+then
+  bad "readme paths resolve from wp-devkit"
+  cat "$ROOT/readme-paths.txt" >&2 || true
+else
+  ok "readme paths resolve from wp-devkit"
+fi
+( cd "$DOC/project-x/wp-devkit" && ./bin/wp-devkit-check-db.sh ../../project-x-baseline ) >"$ROOT/readme-check-db.txt" 2>&1
+( cd "$DOC/project-x/wp-devkit" && ./bin/wp-devkit-preflight.sh ../../project-x-baseline ) >"$ROOT/readme-preflight.txt" 2>&1
+assert "documented check-db runs from wp-devkit" grep -q 'no wp-config.php yet' "$ROOT/readme-check-db.txt"
+assert "documented preflight runs from wp-devkit" grep -q 'belongs only to' "$ROOT/readme-preflight.txt"
+snap_out=$(cd "$DOC/project-x/wp-devkit" && realpath -m ../../project-x-snapshots/smoke.md)
+site_root=$(cd "$DOC/project-x" && pwd)
+assert "documented smoke output stays outside the site" test "${snap_out#"$site_root"/}" = "$snap_out"
 
 say "git archive contains only wp-devkit"
 ARCHIVE="$ROOT/archive.txt"

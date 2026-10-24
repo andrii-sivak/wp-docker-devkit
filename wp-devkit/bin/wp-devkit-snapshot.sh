@@ -11,7 +11,7 @@ mkdir -p "$snap_dir"
 dest="$snap_dir/$name.sql"
 wp_devkit_snapshot_is_safe "$dest"
 docker compose --project-directory "$kit" exec -T php wp db export - \
-  | sed '/enable the sandbox mode/d' > "$dest"
+  | wp_devkit_strip_sandbox_directive > "$dest"
 test -s "$dest" || wp_devkit_die "snapshot is empty: $dest"
 echo "wp-devkit: wrote $dest"
 echo "wp-devkit: do not edit the source site or its database until this snapshot has been restored into each copy."

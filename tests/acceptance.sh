@@ -5,7 +5,24 @@
 set -Eeuo pipefail
 
 REPO=$(cd "$(dirname "$0")/.." && pwd)
-WORK=${WP_DEVKIT_ACCEPTANCE:-${TMPDIR:-/tmp}/wp-devkit-mvp}
+RUN=$(python3 -c 'import secrets; print(secrets.token_hex(4))')
+P_SRC="wps${RUN}"
+P_BASE="wpb${RUN}"
+P_CAND="wpc${RUN}"
+P_CORE="wpo${RUN}"
+P_INC="wpi${RUN}"
+PORT_SRC=$(( 25000 + (0x$RUN % 8000) ))
+PORT_BASE=$((PORT_SRC + 1))
+PORT_CAND=$((PORT_SRC + 2))
+PORT_CORE=$((PORT_SRC + 3))
+CREATED_WORK=0
+if [[ -n "${WP_DEVKIT_ACCEPTANCE:-}" ]]; then
+  WORK=$WP_DEVKIT_ACCEPTANCE
+  mkdir -p "$WORK"
+else
+  WORK=$(mktemp -d "${TMPDIR:-/tmp}/wp-devkit-accept-${RUN}.XXXXXX")
+  CREATED_WORK=1
+fi
 LOG="$WORK/log"
 mkdir -p "$LOG"
 SRC="$WORK/project-x"
@@ -40,6 +57,10 @@ cleanup() {
   done
   reset_dir "$WORK/empty-template" || true
   reset_dir "$WORK/complete" || true
+  if [[ "$CREATED_WORK" -eq 1 && -d "$WORK" ]]; then
+    docker run --rm -v "$WORK:/work" alpine:3.20 rm -rf /work >/dev/null 2>&1 || true
+    rm -rf "$WORK"
+  fi
 }
 trap cleanup EXIT
 
@@ -86,7 +107,7 @@ mkdir -p "$INCOMPLETE/wp-content/plugins/custom"
 printf '<?php echo "keep";\n' > "$INCOMPLETE/wp-content/plugins/custom/plugin.php"
 before=$(sha256sum "$INCOMPLETE/wp-content/plugins/custom/plugin.php" | awk '{print $1}')
 set +e
-printf 'COMPOSE_PROJECT_NAME=wpdevkitincomp\nPHP_IMAGE=wp-devkit-php:8.4\n' > "$INCOMPLETE/wp-devkit/.env"
+printf 'COMPOSE_PROJECT_NAME=%s\nPHP_IMAGE=wp-devkit-php:8.4\n' "$P_INC" > "$INCOMPLETE/wp-devkit/.env"
 docker compose --project-directory "$INCOMPLETE/wp-devkit" run --rm --no-deps --entrypoint wp-devkit-entrypoint.sh php php-fpm -v >"$LOG/incomplete.txt" 2>&1
 incomplete_code=$?
 set -e
@@ -125,12 +146,12 @@ grep -q 'state=complete' "$LOG/complete.txt" && ok "complete state logged" || ba
 say "stack: greenfield"
 reset_dir "$SRC"
 copy_template "$SRC"
-cat > "$SRC/wp-devkit/.env" <<'EOF'
-COMPOSE_PROJECT_NAME=wpdevkitsrc
-HTTP_PORT=18081
-WP_HOME=http://127.0.0.1:18081
-WP_SITEURL=http://127.0.0.1:18081
-PHP_IMAGE=wp-devkit-php:wpdevkitsrc
+cat > "$SRC/wp-devkit/.env" <<EOF
+COMPOSE_PROJECT_NAME=${P_SRC}
+HTTP_PORT=${PORT_SRC}
+WP_HOME=http://127.0.0.1:${PORT_SRC}
+WP_SITEURL=http://127.0.0.1:${PORT_SRC}
+PHP_IMAGE=wp-devkit-php:${P_SRC}
 PHP_MEM_LIMIT=384m
 PHP_CPUS=0.50
 PHP_PIDS_LIMIT=222
@@ -153,10 +174,10 @@ read -r mem nanos pids < <(docker inspect --format '{{.HostConfig.Memory}} {{.Ho
 assert "php memory limit applied" test "$mem" -eq 402653184
 assert "php cpu limit applied" test "$nanos" -eq 500000000
 assert "php pid limit applied" test "$pids" -eq 222
-code_health=$(curl -sS -o "$LOG/healthz.txt" -w '%{http_code}' http://127.0.0.1:18081/healthz)
+code_health=$(curl -sS -o "$LOG/healthz.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/healthz")
 assert "healthz before install" test "$code_health" = "200"
 grep -q '^ok$' "$LOG/healthz.txt" && ok "healthz body" || bad "healthz body"
-code_install=$(curl -sS -o "$LOG/install.html" -w '%{http_code}' http://127.0.0.1:18081/wp-admin/install.php)
+code_install=$(curl -sS -o "$LOG/install.html" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-admin/install.php")
 assert "install wizard reachable before completion" test "$code_install" = "200"
 
 say "tools"
@@ -182,12 +203,12 @@ curl -sS -c "$LOG/cookies" -b "$LOG/cookies" -o "$LOG/install-step2.html" -w '%{
   --data-urlencode "admin_email=devkit@example.com" \
   --data-urlencode "language=" \
   --data-urlencode "Submit=Install WordPress" \
-  "http://127.0.0.1:18081/wp-admin/install.php?step=2" >"$LOG/install-code.txt" || true
+  "http://127.0.0.1:${PORT_SRC}/wp-admin/install.php?step=2" >"$LOG/install-code.txt" || true
 if ! docker compose --project-directory "$SRC/wp-devkit" exec -T php wp core is-installed >"$LOG/is-installed.txt" 2>&1; then
   echo "HTTP install did not finish; body follows" >>"$LOG/is-installed.txt"
   tail -c 2000 "$LOG/install-step2.html" >>"$LOG/is-installed.txt" || true
   docker compose --project-directory "$SRC/wp-devkit" exec -T php wp core install \
-    --url="http://127.0.0.1:18081" \
+    --url="http://127.0.0.1:${PORT_SRC}" \
     --title="Devkit Pilot" \
     --admin_user=devkit \
     --admin_password='Devkit-Test-Pass-1' \
@@ -201,13 +222,13 @@ assert "www-data can write uploads" test -f "$SRC/wp-content/uploads/write-test.
 
 say "http hygiene"
 docker compose --project-directory "$SRC/wp-devkit" exec -T -u www-data php sh -c 'printf "CANARY_SQL\n" > public.sql; printf "<?php echo \"EXECUTED\";\n" > wp-content/uploads/shell.php; printf "static-ok\n" > wp-content/uploads/plain.txt'
-env_code=$(curl -sS -o "$LOG/env-body.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-devkit/.env)
-sql_code=$(curl -sS -o "$LOG/sql-body.txt" -w '%{http_code}' http://127.0.0.1:18081/public.sql)
-php_code=$(curl -sS -o "$LOG/upload-php.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-content/uploads/shell.php)
-txt_code=$(curl -sS -o "$LOG/upload-txt.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-content/uploads/plain.txt)
-compose_code=$(curl -sS -o "$LOG/compose-body.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-devkit/compose.yaml)
-cfg_code=$(curl -sS -o "$LOG/wpconfig-body.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-config.php)
-readme_code=$(curl -sS -o "$LOG/kit-readme.txt" -w '%{http_code}' http://127.0.0.1:18081/wp-devkit/README.md)
+env_code=$(curl -sS -o "$LOG/env-body.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-devkit/.env")
+sql_code=$(curl -sS -o "$LOG/sql-body.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/public.sql")
+php_code=$(curl -sS -o "$LOG/upload-php.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-content/uploads/shell.php")
+txt_code=$(curl -sS -o "$LOG/upload-txt.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-content/uploads/plain.txt")
+compose_code=$(curl -sS -o "$LOG/compose-body.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-devkit/compose.yaml")
+cfg_code=$(curl -sS -o "$LOG/wpconfig-body.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-config.php")
+readme_code=$(curl -sS -o "$LOG/kit-readme.txt" -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/wp-devkit/README.md")
 assert "dotenv not served" test "$env_code" = "403"
 assert "sql not served" test "$sql_code" = "403"
 assert "upload php not executed" test "$php_code" = "403"
@@ -222,12 +243,19 @@ grep -q DB_PASSWORD "$LOG/env-body.txt" && bad "env body hidden" || ok "env body
 say "plugin pinned, snapshot, two copies"
 docker compose --project-directory "$SRC/wp-devkit" exec -T php wp plugin install hello-dolly --version=1.6 --force >"$LOG/plugin-install.txt" 2>&1
 assert "hello dolly 1.6 installed" grep -q 'Success' "$LOG/plugin-install.txt"
+docker compose --project-directory "$SRC/wp-devkit" exec -T php wp option update sandbox_note 'enable the sandbox mode' >/dev/null
 ( cd "$SRC/wp-devkit" && ./bin/wp-devkit-snapshot.sh initial ) >"$LOG/snapshot.txt" 2>&1
 assert "snapshot outside http root" test -s "$WORK/project-x-snapshots/initial.sql"
+grep -F 'enable the sandbox mode' "$WORK/project-x-snapshots/initial.sql" >/dev/null && ok "snapshot keeps sandbox phrase" || bad "snapshot keeps sandbox phrase"
+if grep -Eq '^[[:space:]]*/\*M!999999\\- enable the sandbox mode \*/[[:space:]]*$' "$WORK/project-x-snapshots/initial.sql"; then
+  bad "snapshot dropped the sandbox directive line"
+else
+  ok "snapshot dropped the sandbox directive line"
+fi
 # Nested prior instance must not be copied. The tree is owned by uid 33.
 docker compose --project-directory "$SRC/wp-devkit" exec -T -u root php sh -c 'mkdir -p nested-instance && printf "nested-canary\n" > nested-instance/secret.txt && printf "nested\n" > nested-instance/.wp-devkit-instance'
-( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --role baseline --project wpdevkitbase --port 18082 --old-url "http://127.0.0.1:18081" --new-url "http://127.0.0.1:18082" ) >"$LOG/copy-base.txt" 2>&1
-( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --role candidate --project wpdevkitcand --port 18083 --old-url "http://127.0.0.1:18081" --new-url "http://127.0.0.1:18083" ) >"$LOG/copy-cand.txt" 2>&1
+( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --role baseline --project "$P_BASE" --port "$PORT_BASE" --old-url "http://127.0.0.1:${PORT_SRC}" --new-url "http://127.0.0.1:${PORT_BASE}" ) >"$LOG/copy-base.txt" 2>&1
+( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --role candidate --project "$P_CAND" --port "$PORT_CAND" --old-url "http://127.0.0.1:${PORT_SRC}" --new-url "http://127.0.0.1:${PORT_CAND}" ) >"$LOG/copy-cand.txt" 2>&1
 assert "nested instance excluded" test ! -e "$BASE/nested-instance/secret.txt"
 assert "baseline marker written" test -f "$BASE/wp-devkit/.wp-devkit-instance"
 base_mode=$(stat -c '%a' "$BASE")
@@ -244,8 +272,12 @@ assert "candidate healthy" wait_healthy "$CAND"
 ( cd "$CAND/wp-devkit" && ./bin/wp-devkit-adapt-urls.sh ) >"$LOG/adapt-cand.txt" 2>&1
 base_home=$(docker compose --project-directory "$BASE/wp-devkit" exec -T php wp option get home | tr -d '[:space:]')
 cand_home=$(docker compose --project-directory "$CAND/wp-devkit" exec -T php wp option get home | tr -d '[:space:]')
-assert "baseline home url" test "$base_home" = "http://127.0.0.1:18082"
-assert "candidate home url" test "$cand_home" = "http://127.0.0.1:18083"
+assert "baseline home url" test "$base_home" = "http://127.0.0.1:${PORT_BASE}"
+assert "candidate home url" test "$cand_home" = "http://127.0.0.1:${PORT_CAND}"
+base_note=$(docker compose --project-directory "$BASE/wp-devkit" exec -T php wp option get sandbox_note | tr -d '[:space:]')
+cand_note=$(docker compose --project-directory "$CAND/wp-devkit" exec -T php wp option get sandbox_note | tr -d '[:space:]')
+assert "baseline restore kept sandbox phrase" test "$base_note" = "enablethesandboxmode"
+assert "candidate restore kept sandbox phrase" test "$cand_note" = "enablethesandboxmode"
 
 docker compose --project-directory "$BASE/wp-devkit" exec -T php wp option update blogdescription "baseline-only" >/dev/null
 base_desc=$(docker compose --project-directory "$BASE/wp-devkit" exec -T php wp option get blogdescription | tr -d '[:space:]')
@@ -258,9 +290,9 @@ docker compose --project-directory "$BASE/wp-devkit" exec -T -u www-data php sh 
 assert "candidate lacks baseline file" test ! -e "$CAND/wp-content/uploads/only-baseline.txt"
 assert "source lacks baseline file" test ! -e "$SRC/wp-content/uploads/only-baseline.txt"
 
-src_vol=$(docker volume ls --format '{{.Name}}' | grep wpdevkitsrc || true)
-base_vol=$(docker volume ls --format '{{.Name}}' | grep wpdevkitbase || true)
-cand_vol=$(docker volume ls --format '{{.Name}}' | grep wpdevkitcand || true)
+src_vol=$(docker volume ls --format '{{.Name}}' | grep -x "${P_SRC}_db-data" || true)
+base_vol=$(docker volume ls --format '{{.Name}}' | grep -x "${P_BASE}_db-data" || true)
+cand_vol=$(docker volume ls --format '{{.Name}}' | grep -x "${P_CAND}_db-data" || true)
 assert "distinct source volume" test -n "$src_vol"
 assert "distinct baseline volume" test "$base_vol" != "$src_vol"
 assert "distinct candidate volume" test "$cand_vol" != "$base_vol" && test "$cand_vol" != "$src_vol"
@@ -278,7 +310,7 @@ else
 fi
 
 say "core dimension on a third copy"
-( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --dest "$CORE" --project wpdevkitcore --port 18084 --old-url "http://127.0.0.1:18081" --new-url "http://127.0.0.1:18084" ) >"$LOG/copy-core.txt" 2>&1
+( cd "$SRC/wp-devkit" && ./bin/wp-devkit-copy.sh --source "$SRC" --dest "$CORE" --project "$P_CORE" --port "$PORT_CORE" --old-url "http://127.0.0.1:${PORT_SRC}" --new-url "http://127.0.0.1:${PORT_CORE}" ) >"$LOG/copy-core.txt" 2>&1
 docker compose --project-directory "$CORE/wp-devkit" up -d --build >"$LOG/up-core.txt" 2>&1
 assert "core candidate healthy" wait_healthy "$CORE"
 ( cd "$CORE/wp-devkit" && ./bin/wp-devkit-restore.sh --target "$CORE" "$WORK/project-x-snapshots/initial.sql" ) >"$LOG/restore-core.txt" 2>&1
@@ -317,13 +349,13 @@ while IFS= read -r id; do
     # stopped by our cleanup only if it belonged to the candidate project
     name=$(docker ps -a --filter "id=$id" --format '{{.Names}}' || true)
     case "$name" in
-      *wpdevkitcand*) ;;
+      *"${P_CAND}"*) ;;
       *) missing=1 ;;
     esac
   fi
 done <<<"$unrelated"
 # Simpler invariant: source homepage still answers and no system prune was invoked.
-src_code=$(curl -sS -o /dev/null -w '%{http_code}' http://127.0.0.1:18081/)
+src_code=$(curl -sS -o /dev/null -w '%{http_code}' "http://127.0.0.1:${PORT_SRC}/")
 assert "source still responds after candidate cleanup" test "$src_code" = "200" -o "$src_code" = "302"
 grep -q 'system prune' "$LOG/cleanup-cand.txt" && bad "cleanup did not prune" || ok "cleanup did not prune"
 

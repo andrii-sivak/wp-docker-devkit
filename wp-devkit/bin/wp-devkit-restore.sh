@@ -39,6 +39,6 @@ kit=$(wp_devkit_kit_of_site "$target")
 wp_devkit_assert_compose_ownership "$kit" "$project" owned
 wp_devkit_snapshot_is_safe "$snapshot"
 echo "wp-devkit: importing $snapshot into copy $target (project $project) only."
-sed '/enable the sandbox mode/d' "$snapshot" \
+wp_devkit_strip_sandbox_directive < "$snapshot" \
   | docker compose --project-directory "$kit" --project-name "$project" exec -T php wp db import -
 echo "wp-devkit: imported $snapshot into project $project"

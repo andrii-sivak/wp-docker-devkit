@@ -168,6 +168,13 @@ wp_devkit_assert_compose_ownership() {
   fi
 }
 
+# Remove only the MariaDB dump directive that older clients treat as a command.
+# The line is exactly: /*M!999999\- enable the sandbox mode */
+# Statements that merely contain those words, including multi-row INSERTs, stay.
+wp_devkit_strip_sandbox_directive() {
+  sed -E '/^[[:space:]]*\/\*M!999999\\- enable the sandbox mode \*\/[[:space:]]*$/d'
+}
+
 # Print OK or the offending DB_HOST expression. Reads wp-config.php.
 wp_devkit_db_host_status() {
   local config=$1

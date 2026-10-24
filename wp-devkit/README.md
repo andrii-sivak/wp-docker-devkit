@@ -96,18 +96,18 @@ bin/wp-devkit-copy.sh \
 
 If a sibling already exists or the parent directory is not writable, the command stops. Pass `--dest /another/path` only when that path is outside the source and is empty. The copy skips nested trees that already contain `.wp-devkit-instance`, and it skips top-level `*-baseline`, `*-candidate`, and `*-snapshots` directories. It refuses a symlink that points outside the source. Each copied file keeps the uid, gid, and mode it had in the source, including mixed ownership. The original tree is not chowned. The copy root is not made world-writable. Marker files and `.env` are written inside the copy's `wp-devkit/` and are readable by the user who ran the copy. PHP-FPM and WP-CLI run as uid 33 (`www-data`). Core and plugin updates on a copy succeed when those files are writable by uid 33; otherwise adjust the copy, not the original. Each copy receives its own `.env`, project name, HTTP port, and PHP image tag.
 
-Check the copy, then start it and import the same snapshot into its own database. These commands name the baseline copy, not the source:
+Check the copy, then start it and import the same snapshot into its own database. Run these from `project-x/wp-devkit/`. A sibling of `project-x/` is two levels up (`../../`), because `../` is `project-x/` itself. These commands name the baseline copy, not the source:
 
 ```bash
-bin/wp-devkit-check-db.sh ../project-x-baseline
-bin/wp-devkit-preflight.sh ../project-x-baseline
-docker compose --project-directory ../project-x-baseline/wp-devkit build
-docker compose --project-directory ../project-x-baseline/wp-devkit up -d
-bin/wp-devkit-restore.sh --target ../project-x-baseline ../project-x-snapshots/initial.sql
-../project-x-baseline/wp-devkit/bin/wp-devkit-adapt-urls.sh
+bin/wp-devkit-check-db.sh ../../project-x-baseline
+bin/wp-devkit-preflight.sh ../../project-x-baseline
+docker compose --project-directory ../../project-x-baseline/wp-devkit build
+docker compose --project-directory ../../project-x-baseline/wp-devkit up -d
+bin/wp-devkit-restore.sh --target ../../project-x-baseline ../../project-x-snapshots/initial.sql
+../../project-x-baseline/wp-devkit/bin/wp-devkit-adapt-urls.sh
 ```
 
-Run the adapt command from the copy, as shown. It reads `.wp-devkit-meta` as data, uses `wp search-replace` (which updates serialized values), then sets the `home` and `siteurl` options. Constants already saved in `wp-config.php` are not rewritten. Repeat restore and adapt for `../project-x-candidate`.
+Run the adapt command from the copy, as shown. It reads `.wp-devkit-meta` as data, uses `wp search-replace` (which updates serialized values), then sets the `home` and `siteurl` options. Constants already saved in `wp-config.php` are not rewritten. Repeat restore and adapt for `../../project-x-candidate`.
 
 Change one dimension on the candidate:
 
@@ -115,7 +115,7 @@ Change one dimension on the candidate:
 | --- | --- | --- |
 | PHP | Set `PHP_BASE_IMAGE` in the candidate `wp-devkit/.env`, set a distinct `PHP_IMAGE`, then `docker compose build && docker compose up -d` from that `wp-devkit/` | Core files |
 | WordPress | `docker compose exec php wp core check-update`, then `docker compose exec php wp core update` for the offer WP-CLI selects, or `wp core update --version=7.1.3` for one exact release. Then `wp core update-db` when WordPress asks. Record `wp core version`. `wp core update --version=latest` is not a version number and leaves the site unchanged | Plugins, PHP image, database volume |
-| Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh --target ../project-x-candidate ../project-x-snapshots/initial.sql`. Do not copy `/var/lib/mysql` | Files |
+| Database | New empty volume, new `DB_IMAGE`, `bin/wp-devkit-restore.sh --target ../../project-x-candidate ../../project-x-snapshots/initial.sql`. Do not copy `/var/lib/mysql` | Files |
 | Plugin | `docker compose exec php wp plugin update <slug>` | Other plugins |
 
 Record actual versions with `bin/wp-devkit-versions.sh`. `latest` must be written down as the version number WP-CLI prints afterward.
@@ -123,7 +123,7 @@ Record actual versions with `bin/wp-devkit-versions.sh`. `latest` must be writte
 ## Checks and report
 
 ```bash
-bin/wp-devkit-smoke.sh --output ../project-x-snapshots/smoke.md
+bin/wp-devkit-smoke.sh --output ../../project-x-snapshots/smoke.md
 ```
 
 `PROJECT_CHECK_COMMAND`, when set, is run on the host. If it is unset, the report says NOT CONFIGURED. Statuses are PASS, FAIL, SKIPPED, NOT CONFIGURED, and ERROR. A skipped integration check is not a success. Smoke checks do not prove that payment, mail, or other integrations work.
@@ -144,7 +144,7 @@ Plain `docker compose up -d` does not start either service.
 This removes one copied WordPress root, its containers, its network, and its named database volume. It checks that every Compose resource for that project name has this copy's `wp-devkit/` as its working directory. A name that belongs to another directory is refused, and nothing is deleted.
 
 ```bash
-bin/wp-devkit-cleanup.sh ../project-x-candidate
+bin/wp-devkit-cleanup.sh ../../project-x-candidate
 ```
 
 Restore and cleanup require a directory created by `bin/wp-devkit-copy.sh`. They refuse the original project and a copy whose marker, `.wp-devkit-meta`, and `COMPOSE_PROJECT_NAME` disagree. Neither command runs `docker system prune` or deletes other projects.
@@ -152,7 +152,7 @@ Restore and cleanup require a directory created by `bin/wp-devkit-copy.sh`. They
 `bin/wp-devkit-restore.sh` does not import into the tree that contains the script. Pass the copy explicitly:
 
 ```bash
-bin/wp-devkit-restore.sh --target ../project-x-candidate ../project-x-snapshots/initial.sql
+bin/wp-devkit-restore.sh --target ../../project-x-candidate ../../project-x-snapshots/initial.sql
 ```
 
 ## Integration warning
