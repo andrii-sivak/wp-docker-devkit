@@ -1,3 +1,4 @@
+.idea/
 .env
 wp-devkit-work/
 *.sql
