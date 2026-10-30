@@ -17,6 +17,8 @@ Discovered facts, inferred settings, and missing data stay separate. The host `p
 
 Read what is already on disk. Do not pull or build images, start containers, create Docker resources, start the source database, or edit files. If a check would do any of those, say so and wait for permission. After the user authorizes execution, use the README workflow.
 
+A missing `wp-devkit/.env` in the original WordPress root is expected after ZIP installation, not a blocker. Do not create it or initialize or start DevKit in the original root. The copy workflow uses `.env.example` to create instance-specific `.env` files inside the baseline and candidate copies.
+
 Do not print `wp-config.php`, `.env`, Git remote URLs that embed credentials, passwords, salts, tokens, or API keys. Report whether a setting exists, whether it is a hardcoded constant or an environment lookup, and whether two sources agree. If a credential looks exposed, warn once. Do not rotate or rewrite it.
 
 For an existing site, record without secret values:
@@ -50,6 +52,8 @@ Follow README for the snapshot, copy, preflight, start, restore, and URL command
 ## Report
 
 Write Markdown with the goal, the one dimension or the user-approved combination, both roots and their parameters, the uploads mode, the disk estimate, the snapshot path, configured versus runtime-verified versions, commands, exit codes, and only these statuses: PASS, FAIL, SKIPPED, NOT CONFIGURED, ERROR. If uploads were excluded, record missing media files as a testing limitation, not as a PHP, WordPress, or plugin regression. State cleanup only after it has run. Point at the smoke or comparison report that already exists. Do not add a migration plan, a commit, or another report.
+
+Keep routine progress updates and final summaries concise. Do not repeat completed checks without new evidence or introduce extra approval gates for read-only inspection; honor any permissions required by the client.
 
 Before either copy starts, repeat the README integration warning: Docker does not block outbound mail, webhooks, or payments. Do not claim that it does.
 
