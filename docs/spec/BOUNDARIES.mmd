@@ -1,0 +1,64 @@
+flowchart TB
+    operator["Developer / AI agent<br/>Reviews plan and approvals"]
+    scripts["Host scripts + Docker Compose<br/>Host Docker daemon access"]
+    operator -->|approved operations| scripts
+
+    subgraph ORIGINAL["Outside test copies — original project"]
+        source["Original WordPress root<br/>Read / copy only"]
+        source_db[("Source DB<br/>Read-only export")]
+    end
+
+    supplied_dump["Permitted existing SQL dump<br/>alternative to source export"]
+    snapshot[("Sibling snapshots directory<br/>initial.sql + reports<br/>Retained after cleanup")]
+    source_db -->|one logical export| snapshot
+    supplied_dump -.->|alternative input| snapshot
+
+    subgraph BASELINE["Baseline — independent Compose project"]
+        direction TB
+        base_root["Copied WordPress tree<br/>optional uploads"]
+        base_nginx["Nginx<br/>localhost HTTP port A"]
+        base_php["PHP-FPM / WP-CLI"]
+        base_db[("Dedicated DB volume")]
+        base_nginx --> base_php
+        base_php --> base_db
+        base_root -.->|read/write bind mount| base_php
+        base_root -.->|read-only bind mount| base_nginx
+    end
+
+    subgraph CANDIDATE["Candidate — independent Compose project"]
+        direction TB
+        cand_root["Copied WordPress tree<br/>same uploads mode"]
+        cand_nginx["Nginx<br/>localhost HTTP port B"]
+        cand_php["PHP-FPM / WP-CLI<br/>approved version change"]
+        cand_db[("Dedicated DB volume")]
+        cand_nginx --> cand_php
+        cand_php --> cand_db
+        cand_root -.->|read/write bind mount| cand_php
+        cand_root -.->|read-only bind mount| cand_nginx
+    end
+
+    source -->|separate file copy| base_root
+    source -->|separate file copy| cand_root
+    snapshot -->|restore same SQL| base_db
+    snapshot -->|restore same SQL| cand_db
+    scripts -->|manage identified copy| base_nginx
+    scripts -->|manage identified copy| cand_nginx
+
+    external["Real external services<br/>SMTP / webhooks / payments / APIs"]
+    base_php -.->|outbound access NOT blocked| external
+    cand_php -.->|outbound access NOT blocked| external
+
+    cleanup["Targeted cleanup<br/>copies + owned Compose resources only"]
+    scripts -->|on explicit cleanup request| cleanup
+    cleanup -.->|removes| base_root
+    cleanup -.->|removes owned DB volume| base_db
+    cleanup -.->|removes| cand_root
+    cleanup -.->|removes owned DB volume| cand_db
+    cleanup -.->|does NOT remove| snapshot
+
+    classDef sourceFill fill:#e7edf5,stroke:#67849d,color:#182738
+    classDef keepFill fill:#e4f4eb,stroke:#499668,color:#153324
+    classDef riskFill fill:#fff0d7,stroke:#bd8731,color:#513300
+    class source,source_db sourceFill
+    class snapshot keepFill
+    class external riskFill
